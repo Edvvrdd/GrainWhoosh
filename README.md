@@ -102,7 +102,7 @@ Heavily inspired by [ReaWhoosh](https://reaper.blog/2026/02/reawhoosh-generator-
 
 Design sensibility informed by [Tonsturm Whoosh](https://tonsturm.com/product/whoosh).
 
-Built collaboratively with Claude (Anthropic) across [N] sessions of iteration. Architectural decisions, UX design, workflow direction, and scope choices are mine; much of the Lua implementation was drafted with AI assistance and refined through debugging.
+Built collaboratively with Claude (Anthropic). Architectural decisions, UX design, workflow direction, and scope choices are mine; much of the Lua implementation was drafted with AI assistance and refined through debugging.
 
 Thanks to the REAPER scripting community and the maintainers of [ReaImGui](https://github.com/cfillion/reaimgui).
 
