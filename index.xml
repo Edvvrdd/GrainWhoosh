@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<index version="1" name="GrainWhoosh">
+  <category name="Grain">
+    <reapack name="GrainWhoosh.lua" type="script">
+      <metadata>
+        <description>Granular whoosh generator for REAPER</description>
+        <link rel="website">https://github.com/YOUR_USERNAME/GrainWhoosh</link>
+      </metadata>
+      <version name="0.9.0" author="Ed" time="2026-04-20T00:00:00Z">
+        <changelog><![CDATA[Initial beta release]]></changelog>
+        <source main="main">https://raw.githubusercontent.com/YOUR_USERNAME/GrainWhoosh/main/GrainWhoosh.lua</source>
+      </version>
+    </reapack>
+  </category>
+</index>
