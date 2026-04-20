@@ -1,22 +1,21 @@
--- @description GrainWhoosh - Granular Whoosh Generator
+-- @description GrainWhoosh
 -- @author Ed
--- @version 0.9.0-beta
+-- @version 0.9.0
+-- @provides [main] .
 -- @about
---   A granular sound design tool built directly into REAPER.
---   Your session is the sample library — drop audio items onto child
+--   # GrainWhoosh — Granular Whoosh Generator
+--
+--   A granular sound design tool built directly into REAPER. Your
+--   session is the sample library — drop audio items onto child
 --   tracks of a folder, make a time selection, and click Generate.
---   The tool resamples the sources into a granulated whoosh with
---   editable volume, pan, and pitch envelopes ready to tweak.
 --
 --   Requires:
---     * REAPER 6.x or newer
---     * ReaImGui (install via ReaPack)
---     * ReaPitch (ships with REAPER)
---
---   Inspired by ReaWhoosh (SBP) and Tonsturm Whoosh. Built
---   collaboratively with Claude.
+--   - REAPER 6.x or newer
+--   - ReaImGui (install via ReaPack)
+--   - ReaPitch (ships with REAPER)
 -- @changelog
---   v0.9.0-beta - Initial beta release
+--   v0.9.0
+--   - Initial beta release
 
 local r = reaper
 
