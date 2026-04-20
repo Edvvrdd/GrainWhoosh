@@ -23,7 +23,7 @@ Both tools can sit side-by-side in a sound designer's workflow. They do differen
 1. Install [ReaPack](https://reapack.com) if you haven't already
 2. In REAPER: **Extensions → ReaPack → Manage repositories**
 3. Click **Import/export → Import repositories**
-4. Paste this URL:
+4. Paste this URL: [https://raw.githubusercontent.com/Edvvrdd/GrainWhoosh/main/index.xml](https://raw.githubusercontent.com/Edvvrdd/GrainWhoosh/main/index.xml)
 5. **Extensions → ReaPack → Synchronize packages**
 6. Run `Script: GrainWhoosh.lua` from the Actions list
 
