@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <index version="1" name="GrainWhoosh">
   <category name="Grain">
-    <reapack name="GrainWhoosh.lua" type="script">
+    <reapack name="GrainWhoosh.lua" type="script" desc="Granular whoosh generator for REAPER">
       <metadata>
         <description>Granular whoosh generator for REAPER</description>
         <link rel="website">https://github.com/Edvvrdd/GrainWhoosh</link>
