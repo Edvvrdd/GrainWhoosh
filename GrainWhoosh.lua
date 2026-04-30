@@ -1,6 +1,6 @@
 -- @description GrainWhoosh
 -- @author Ed
--- @version 0.9.0
+-- @version 0.9.1
 -- @provides [main] .
 -- @about
 --   # GrainWhoosh — Granular Whoosh Generator
@@ -14,6 +14,9 @@
 --   - ReaImGui (install via ReaPack)
 --   - ReaPitch (ships with REAPER)
 -- @changelog
+--   v0.9.1
+--   - Fixed docking crash: ImGui_End() now only called when window is visible
+--   - Added docking configuration support
 --   v0.9.0
 --   - Initial beta release
 
@@ -55,6 +58,7 @@ end
 
 -- ── ImGui context ───────────────────────────────────────────────
 local ctx  = r.ImGui_CreateContext('GrainWhoosh')
+r.ImGui_SetConfigFlags(ctx, r.ImGui_ConfigFlags_DockingEnable())
 local sans = r.ImGui_CreateFont('sans-serif', 12)
 r.ImGui_Attach(ctx, sans)
 
@@ -754,9 +758,9 @@ function draw()
   refresh_source_info()
   validate()
 
-  r.ImGui_SetNextWindowSize(ctx, 380, 600, r.ImGui_Cond_FirstUseEver())
-  local vis, open = r.ImGui_Begin(ctx, 'GrainWhoosh v0.9.0-beta', true,
-      r.ImGui_WindowFlags_NoCollapse())
+r.ImGui_SetNextWindowSize(ctx, 380, 600, r.ImGui_Cond_FirstUseEver())
+local vis, open = r.ImGui_Begin(ctx, 'GrainWhoosh v0.9.1-beta', true,
+    r.ImGui_WindowFlags_NoCollapse())
 
   if vis then
 
@@ -877,7 +881,8 @@ function draw()
         end
         if regen_disabled then r.ImGui_EndDisabled(ctx) end
   end
-  r.ImGui_End(ctx)
+    r.ImGui_End(ctx)
+  end
   return open
 end
 
