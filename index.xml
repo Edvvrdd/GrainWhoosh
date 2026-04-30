@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <index version="1" name="GrainWhoosh">
   <category name="Grain">
-    <reapack name="GrainWhoosh.lua" type="script" desc="Granular whoosh generator for REAPER">
+    <reapack name="GranularWhoosh.lua" type="script" desc="Granular whoosh generator for REAPER">
       <metadata>
         <description>Granular whoosh generator for REAPER</description>
         <link rel="website">https://github.com/Edvvrdd/GrainWhoosh</link>
       </metadata>
       <version name="0.9.1" author="Ed" time="2026-04-29T00:00:00Z">
         <changelog><![CDATA[Fixed docking crash and added docking support]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/Edvvrdd/GrainWhoosh/main/GrainWhoosh.lua</source>
+        <source main="main">https://raw.githubusercontent.com/Edvvrdd/GrainWhoosh/main/GranularWhoosh.lua</source>
       </version>
       <version name="0.9.0" author="Ed" time="2026-04-20T00:00:00Z">
         <changelog><![CDATA[Initial beta release]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/Edvvrdd/GrainWhoosh/main/GrainWhoosh.lua</source>
+        <source main="main">https://raw.githubusercontent.com/Edvvrdd/GrainWhoosh/main/GranularWhoosh.lua</source>
       </version>
     </reapack>
   </category>
