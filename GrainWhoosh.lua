@@ -58,7 +58,9 @@ end
 
 -- ── ImGui context ───────────────────────────────────────────────
 local ctx  = r.ImGui_CreateContext('GrainWhoosh')
-r.ImGui_SetConfigFlags(ctx, r.ImGui_ConfigFlags_DockingEnable())
+if r.ImGui_SetConfigFlags and r.ImGui_ConfigFlags_DockingEnable then
+  r.ImGui_SetConfigFlags(ctx, r.ImGui_ConfigFlags_DockingEnable())
+end
 local sans = r.ImGui_CreateFont('sans-serif', 12)
 r.ImGui_Attach(ctx, sans)
 
@@ -880,7 +882,6 @@ local vis, open = r.ImGui_Begin(ctx, 'GrainWhoosh v0.9.1-beta', true,
           do_generate(true)  -- new seed, keep current mono/stereo mode
         end
         if regen_disabled then r.ImGui_EndDisabled(ctx) end
-  end
     r.ImGui_End(ctx)
   end
   return open
