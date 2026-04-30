@@ -1,6 +1,8 @@
 # GranularWhoosh
 
-A granular sound design tool built directly into REAPER. Use folder tracks as a easy and quick sample loading. Generate whoosh or doppler like envelopes. 2 sampling modes for maximum flexibility. 
+A granular sound design tool built directly into REAPER. Unlike traditional sealed instruments or rigid sample libraries, GranularWhoosh turns your entire session into the granular engine. It features a uniquely flexible workflow where every processing stage is fully editable on the timeline — you can tweak volume, pan, pitch, and filter envelopes post-generation, and even recursively re-granulate your output with a single click.
+Built for sound designers who want whoosh-and-beyond without a sealed instrument or external sample library.
+
 
 ## Requirements
 
