@@ -35,20 +35,108 @@ end
 -- Initialize ReaImGui context
 local ctx = r.ImGui_CreateContext("GranularWhoosh")
 
+-- ── Theme (mutable, RGBA format: 0xRRGGBBAA) ──
+local theme = {
+  WindowBg        = 0x12121AFF,
+  ChildBg         = 0x12121AFF,
+  PopupBg         = 0x12121AFF,
+  Border          = 0x2A2A3AFF,
+  Separator       = 0x2A2A3AFF,
+  Text            = 0xEEEEF0FF,
+  TextDisabled    = 0x888899FF,
+  Button          = 0x1A6666FF,
+  ButtonHovered   = 0x229999FF,
+  ButtonActive    = 0x2DBBBBFF,
+  SliderGrab      = 0x00CCCCFF,
+  CheckMark       = 0x00CCCCFF,
+  Header          = 0x1A6666FF,
+  HeaderHovered   = 0x229999FF,
+  FrameBg         = 0x1E1E2EFF,
+  FrameBgHovered  = 0x2A2A40FF,
+  WindowRounding  = 6,
+  FrameRounding   = 4,
+  GrabRounding    = 3,
+  ItemSpacingX    = 8,
+  ItemSpacingY    = 6,
+  FramePaddingX   = 6,
+  FramePaddingY   = 4,
+  WindowPaddingX  = 10,
+  WindowPaddingY  = 10,
+}
+
+local function push_theme()
+  r.ImGui_PushStyleVar(ctx, r.ImGui_StyleVar_WindowPadding(), theme.WindowPaddingX, theme.WindowPaddingY)
+  r.ImGui_PushStyleVar(ctx, r.ImGui_StyleVar_FramePadding(), theme.FramePaddingX, theme.FramePaddingY)
+  r.ImGui_PushStyleVar(ctx, r.ImGui_StyleVar_ItemSpacing(), theme.ItemSpacingX, theme.ItemSpacingY)
+  r.ImGui_PushStyleVar(ctx, r.ImGui_StyleVar_WindowRounding(), theme.WindowRounding)
+  r.ImGui_PushStyleVar(ctx, r.ImGui_StyleVar_FrameRounding(), theme.FrameRounding)
+  r.ImGui_PushStyleVar(ctx, r.ImGui_StyleVar_GrabRounding(), theme.GrabRounding)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_WindowBg(),       theme.WindowBg)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ChildBg(),        theme.ChildBg)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_PopupBg(),        theme.PopupBg)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Border(),         theme.Border)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Separator(),      theme.Separator)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Text(),           theme.Text)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_TextDisabled(),   theme.TextDisabled)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(),         theme.Button)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(),  theme.ButtonHovered)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(),   theme.ButtonActive)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_SliderGrab(),     theme.SliderGrab)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_CheckMark(),      theme.CheckMark)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Header(),         theme.Header)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_HeaderHovered(),  theme.HeaderHovered)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_FrameBg(),        theme.FrameBg)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_FrameBgHovered(), theme.FrameBgHovered)
+end
+
+local function pop_theme()
+  r.ImGui_PopStyleVar(ctx, 6)
+  r.ImGui_PopStyleColor(ctx, 16)
+end
+
+-- ── UI Helpers ──
+local function show_tooltip(text)
+  if not text then return end
+  if r.ImGui_IsItemHovered(ctx) then
+    r.ImGui_BeginTooltip(ctx)
+    r.ImGui_PushTextWrapPos(ctx, r.ImGui_GetFontSize(ctx) * 35.0)
+    r.ImGui_Text(ctx, text)
+    r.ImGui_PopTextWrapPos(ctx)
+    r.ImGui_EndTooltip(ctx)
+  end
+end
+
+local function section_header(label)
+  if r.ImGui_SeparatorText then
+    r.ImGui_SeparatorText(ctx, label)
+  else
+    r.ImGui_Text(ctx, label)
+    r.ImGui_Separator(ctx)
+  end
+end
+
 -- Constants
 local PLAYBACK_MODES = {"Forward", "Reverse", "Ping-Pong", "Random"}
 local SAMPLING_MODES = {"Uniform", "Sequential"}
-local PITCH_DIRS = {"Up → down (approach)", "Down → up"}
-local PAN_DIRS = {"Left → right", "Right → left"}
+-- (direction constants removed — pan and pitch are now single signed sliders)
 
 local grain_vis_data = {}
-for i = 1, 300 do
-  table.insert(grain_vis_data, {
-    x_frac = math.random(),
-    h_frac = 0.2 + math.random() * 0.8,
-    color_idx = math.random(1, 3)
-  })
+
+local function regen_grain_vis_data()
+  grain_vis_data = {}
+  for i = 1, 300 do
+    table.insert(grain_vis_data, {
+      x_frac = math.random(),
+      h_frac = 0.2 + math.random() * 0.8,
+      color_idx = math.random(1, 3)
+    })
+  end
 end
+
+regen_grain_vis_data()
+
+-- Track pos_rnd changes to trigger visualizer redraws
+local last_pos_rnd = nil
 
 -- Initial State
 local state = {
@@ -57,7 +145,7 @@ local state = {
   grain_size = 80.0,   -- Uniform: 10-500ms grain length
   grain_density = 60.0,   -- 0-100 percentage (maps to density/crossfade)
   pos_rnd = 0.15,
-  randomness = 0.2,
+  randomness = 0.0,
   playback_mode = 1, -- 1-based index for combo
   inset = 0.0,         -- 0..0.45 — inset grains by this fraction each side
 
@@ -66,13 +154,10 @@ local state = {
   sel_end = 0,
   sel_duration = 0,
   folder_track = nil,
-  folder_name = "None",
   is_folder = false,
   child_count = 0,
+  source_tracks = {},
 
-  -- Debug info
-  debug_info = {},
-  
   -- Envelope
   peak_pos = 0.5,
   hold_time = 0.0,
@@ -80,19 +165,13 @@ local state = {
   release = 0.5,
   front_spill = 0.0,
   back_spill = 0.0,
-  comp_strength = 0.0,
   
   -- Doppler
-  pitch_range = 6.0,
-  pitch_direction = 1,
-  pitch_peak_offset = 0.0,
+  pitch_shift = 0.0,
   filter_base_freq = 200.0,
   filter_peak_freq = 15000.0,
-  filter_peak_offset = 0.0,
   pan_amount = 1.0,
-  pan_strength = 0.5,
-  pan_direction = 1,
-  pan_peak_offset = 0.0,
+  pan_value = 0.0,  -- -1 (L→R) .. 0 (off) .. +1 (R→L)
   enable_doppler = true,
   
   -- Output / Generation
@@ -102,190 +181,470 @@ local state = {
   generated_end = 0,
   status_msg = "Ready — select a folder and time range",
   is_generating = false,
-  has_generated_item = false,
-  temp_track_idx = 0
+  has_generated_item = false
 }
 
 ---------------------------------------------------------------------
 -- UI Helper Functions
 ---------------------------------------------------------------------
-function labeled_slider(label, value, min, max, format)
+function xy_pad(label, val_x, min_x, max_x, val_y, min_y, max_y, fmt_x, fmt_y, tooltip, label_x, label_y)
+  local avail = r.ImGui_GetContentRegionAvail(ctx)
+  local label_margin = 18  -- space for axis labels
+  local pad = math.min(avail - label_margin - 4, 190)
+  if pad < 80 then pad = 80 end
+  local H = pad
+  local dl = r.ImGui_GetWindowDrawList(ctx)
+
+  -- Center the pad + label margin within the available width
+  local total_w = pad + label_margin
+  local offset_x = math.max(0, (avail - total_w) * 0.5)
+
+  r.ImGui_Dummy(ctx, offset_x, 0)
+  r.ImGui_SameLine(ctx)
+
+  r.ImGui_InvisibleButton(ctx, '##xypad' .. label, pad, H)
+  local active = r.ImGui_IsItemActive(ctx)
+  local hovered = r.ImGui_IsItemHovered(ctx)
+  local cx, cy = r.ImGui_GetItemRectMin(ctx)
+
+  -- Background
+  r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + pad, cy + H, theme.FrameBg, 4)
+  r.ImGui_DrawList_AddRect(dl, cx, cy, cx + pad, cy + H, theme.Border, 4)
+
+  -- Grid lines (4x4)
+  for i = 1, 3 do
+    local gx = cx + (pad * i / 4)
+    local gy = cy + (H * i / 4)
+    r.ImGui_DrawList_AddLine(dl, gx, cy, gx, cy + H, 0x22AAAAAA, 1.0)
+    r.ImGui_DrawList_AddLine(dl, cx, gy, cx + pad, gy, 0x22AAAAAA, 1.0)
+  end
+
+  -- Handle interaction
+  if active then
+    local mx, my = r.ImGui_GetMousePos(ctx)
+    local fx = math.max(0, math.min(1, (mx - cx) / pad))
+    local fy = math.max(0, math.min(1, 1.0 - (my - cy) / H))
+    val_x = min_x + fx * (max_x - min_x)
+    val_y = min_y + fy * (max_y - min_y)
+  end
+
+  -- Handle position
+  local hx = cx + ((val_x - min_x) / (max_x - min_x)) * pad
+  local hy = cy + (1.0 - (val_y - min_y) / (max_y - min_y)) * H
+
+  -- Crosshair
+  r.ImGui_DrawList_AddLine(dl, cx, hy, cx + pad, hy, 0x4400CCCC, 1.0)
+  r.ImGui_DrawList_AddLine(dl, hx, cy, hx, cy + H, 0x4400CCCC, 1.0)
+
+  -- Handle (glow + dot)
+  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 8, 0x3300CCCC)
+  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 5, 0xCC00CCCC)
+  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 2, 0xFFFFFFFF)
+
+  -- Value readout (small, in corners)
+  r.ImGui_DrawList_AddText(dl, cx + 4, cy + H - 14, 0xFF888899,
+    string.format(fmt_x, val_x))
+  r.ImGui_DrawList_AddText(dl, cx + pad - 40, cy + 2, 0xFF888899,
+    string.format(fmt_y, val_y))
+
+  -- ── AXIS LABELS ──
+  -- X axis label ("Density") centered below the pad
+  if label_x then
+    local txt_w = r.ImGui_CalcTextSize(ctx, label_x)
+    r.ImGui_DrawList_AddText(dl, cx + (pad - txt_w) * 0.5, cy + H + 3, theme.TextDisabled, label_x)
+  end
+
+  -- Y axis label ("Size") drawn vertically along the left side
+  if label_y then
+    local chars = {}
+    for c in label_y:gmatch(".") do chars[#chars+1] = c end
+    local char_h = r.ImGui_GetTextLineHeight(ctx)
+    local total_h = #chars * char_h
+    local start_y = cy + (H - total_h) * 0.5
+    for i, c in ipairs(chars) do
+      r.ImGui_DrawList_AddText(dl, cx - label_margin + 2, start_y + (i - 1) * char_h, theme.TextDisabled, c)
+    end
+  end
+
+  if tooltip and (hovered or active) then
+    show_tooltip(tooltip)
+  end
+
+  -- Reserve space below for the X axis label
+  r.ImGui_Dummy(ctx, 1, 16)
+
+  return val_x, val_y, active
+end
+
+function labeled_slider(label, value, min, max, format, default_val, tooltip)
   r.ImGui_Text(ctx, label)
   r.ImGui_SetNextItemWidth(ctx, -1)
   local changed, new_value = r.ImGui_SliderDouble(ctx, '##' .. label, value, min, max, format)
+  if default_val ~= nil and r.ImGui_IsItemHovered(ctx) and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
+    return default_val
+  end
+  show_tooltip(tooltip)
   if changed then return new_value end
   return value
 end
 
-function labeled_combo(label, idx, items)
+function labeled_combo(label, idx, items, tooltip)
   r.ImGui_Text(ctx, label)
   r.ImGui_SetNextItemWidth(ctx, -1)
   local changed, new_idx = r.ImGui_Combo(ctx, '##'..label, idx, table.concat(items, '\0')..'\0')
+  show_tooltip(tooltip)
   if changed then return new_idx end
   return idx
 end
 
-function draw_preview()
+local preview_frame = 0
+local peak_dragging = false  -- tracks whether the peak position dot is being dragged
+local peak_drag_start_my = 0  -- mouse Y at drag start
+local peak_drag_start_hold = 0  -- hold_time at drag start
+local rise_dragging = false  -- tracks whether the rise tension triangle is being dragged
+local fall_dragging = false  -- tracks whether the fall tension triangle is being dragged
+local spill_left_dragging = false
+local spill_right_dragging = false
+local filter_top_dragging = false    -- filter peak knob (top)
+local filter_bottom_dragging = false -- filter base knob (bottom)
+
+function draw_preview(width_offset)
+  preview_frame = preview_frame + 1
+
+  -- Regenerate grain dot positions when positional randomness changes
+  if last_pos_rnd ~= nil and last_pos_rnd ~= state.pos_rnd then
+    regen_grain_vis_data()
+  end
+  last_pos_rnd = state.pos_rnd
+
   local dl = r.ImGui_GetWindowDrawList(ctx)
-  local cx, cy = r.ImGui_GetCursorScreenPos(ctx)
-  local W = r.ImGui_GetContentRegionAvail(ctx)
-  local H = 64
+  local W = r.ImGui_GetContentRegionAvail(ctx) - (width_offset or 0)
+  local H = 160
 
-  -- Dark background
-  r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + W, cy + H, 0xFF0A0A0F, 3)
-  r.ImGui_DrawList_AddRect(dl, cx, cy, cx + W, cy + H, 0x33333333, 3)
+  -- InvisibleButton captures mouse events so the window isn't dragged
+  -- when interacting with the visualizer. All drawing happens via the
+  -- DrawList using the button's screen position.
+  r.ImGui_InvisibleButton(ctx, '##preview', W, H)
+  local cx, cy = r.ImGui_GetItemRectMin(ctx)
 
-  -- ── GRAIN BACKGROUND ──
-  if state.sampling_mode == 1 then
-    -- Sequential: dark sectioned blocks with neon borders
-    local num_sources = math.max(1, math.min(10, state.child_count))
-    local block_w = W / num_sources
-    local overlap_w = block_w * (state.grain_density / 100) * 0.5
-    
-    local fill_colors = {0x22223344, 0x22332244, 0x22224433}
-    local border_colors = {0x44445566, 0x44554466, 0x44446655}
-    
-    local colors = {}
-    for i = 1, num_sources do
-      local color_idx = ((i - 1) % 3) + 1
-      if i > 1 and color_idx == colors[i - 1] then
-        color_idx = (color_idx % 3) + 1
-      end
-      colors[i] = color_idx
-    end
-    
-    for i = 1, num_sources do
-      local fill = fill_colors[colors[i]]
-      local border = border_colors[colors[i]]
-      local x_start = cx + ((i - 1) * block_w)
-      local x_end = x_start + block_w + overlap_w
-      
-      r.ImGui_DrawList_AddRectFilled(dl, x_start, cy + 4, math.min(cx + W - 2, x_end), cy + H - 4, fill, 2)
-      r.ImGui_DrawList_AddLine(dl, x_start, cy + 4, x_start, cy + H - 4, border, 2)
-      
-      local txt = tostring(i)
-      local txt_w = r.ImGui_CalcTextSize(ctx, txt)
-      r.ImGui_DrawList_AddText(dl, x_start + (block_w - txt_w) * 0.5, cy + H * 0.35, 0x88FFFFFF, txt)
-    end
-  else
-    -- Uniform: dark dense texture
-    local density_norm = state.grain_density / 100
-    local num_grains = math.floor(50 + (250 * density_norm))
-    local grain_colors = {0x22334455, 0x22553344, 0x22335544}
-    
-    for i = 1, num_grains do
-      local g = grain_vis_data[i]
-      local x = cx + (g.x_frac * W)
-      local y_start = cy + (H * (1.0 - g.h_frac) / 2)
-      local y_end = y_start + (H * g.h_frac)
-      local alpha_fade = math.floor(0x55 * (1.2 - density_norm))
-      local color = (grain_colors[g.color_idx] & 0x00FFFFFF) | (alpha_fade << 24)
-      r.ImGui_DrawList_AddLine(dl, x, y_start, x, y_end, color, 1.0)
-    end
+  -- Dark background (reads from theme so it stays in sync with the debug window)
+  r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + W, cy + H, theme.WindowBg, 4)
+  r.ImGui_DrawList_AddRect(dl, cx, cy, cx + W, cy + H, theme.Border, 4)
+
+  -- ── INSET SHADING ──
+  local inset = math.max(0.0, math.min(0.45, state.inset))
+  if inset > 0 then
+    local inset_px = W * inset
+    r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + inset_px, cy + H, 0x30000000, 0)
+    r.ImGui_DrawList_AddRectFilled(dl, cx + W - inset_px, cy, cx + W, cy + H, 0x30000000, 0)
   end
 
-  -- ── ENVELOPE CURVES ──
+  -- ── ENVELOPE MATH (computed first so dots can use it) ──
   local att = math.max(-1.0, math.min(1.0, state.attack))
   local rel = math.max(-1.0, math.min(1.0, state.release))
   local dur = math.max(0.001, state.sel_end - state.sel_start)
-  
+
   local function bez(t, v0, v1, tension_a, tension_b)
     local c0 = v0 + (v1 - v0) * (0.33 + tension_a * 0.33)
     local c1 = v1 - (v1 - v0) * (0.33 - tension_b * 0.33)
     local u = 1 - t
     return u*u*u * v0 + 3 * u*u*t * c0 + 3 * u*t*t * c1 + t*t*t * v1
   end
-  
+
   local hold = state.hold_time
   local peak_start = math.max(0, math.min(1.0 - hold, state.peak_pos - hold / 2))
   local peak_end = math.min(1.0, peak_start + hold)
-  
-  local pitch_pk_start = math.max(0, math.min(1.0 - hold, peak_start + state.pitch_peak_offset / dur))
-  local pitch_pk_end = math.min(1.0, pitch_pk_start + hold)
-  local filter_pk_start = math.max(0, math.min(1.0 - hold, peak_start + state.filter_peak_offset / dur))
-  local filter_pk_end = math.min(1.0, filter_pk_start + hold)
-  
-  local function get_v(pk_s, pk_e)
-    return function(t)
-      if t <= pk_s then
-        local lt = (pk_s > 0) and (t / pk_s) or 0
-        return bez(lt, 0, 1, att, -rel)
-      elseif t >= pk_e then
-        local lt = (pk_e < 1) and ((t - pk_e) / (1 - pk_e)) or 0
-        return bez(lt, 1, 0, -rel, 0)
-      else
-        return 1.0
-      end
+
+  local function vol_fn(t)
+    if t <= peak_start then
+      local lt = (peak_start > 0) and (t / peak_start) or 0
+      return bez(lt, 0, 1, att, att)
+    elseif t >= peak_end then
+      local lt = (peak_end < 1) and ((t - peak_end) / (1 - peak_end)) or 0
+      return bez(lt, 1, 0, -rel, -rel)
+    else
+      return 1.0
     end
-  end
-  
-  local segments = 120
-  local pts_vol = {}
-  local pts_pitch = {}
-  local pts_filter = {}
-  
-  for i = 0, segments do
-    local t = i / segments
-    local x = cx + t * W
-    
-    local v_vol = math.max(0, math.min(1, get_v(peak_start, peak_end)(t)))
-    pts_vol[#pts_vol+1] = x
-    pts_vol[#pts_vol+1] = cy + H - v_vol * (H - 6) - 3
-    
-    if state.enable_doppler then
-      local v_pitch = math.max(0, math.min(1, get_v(pitch_pk_start, pitch_pk_end)(t)))
-      local v_filter = math.max(0, math.min(1, get_v(filter_pk_start, filter_pk_end)(t)))
-      pts_pitch[#pts_pitch+1] = x
-      pts_pitch[#pts_pitch+1] = cy + H - v_pitch * (H - 6) - 3
-      pts_filter[#pts_filter+1] = x
-      pts_filter[#pts_filter+1] = cy + H - v_filter * (H - 6) - 3
-    end
-  end
-  
-  if state.enable_doppler then
-    -- Filter (neon green)
-    local arr_f = r.new_array(pts_filter)
-    r.ImGui_DrawList_AddPolyline(dl, arr_f, 0x4400FF88, 0, 4.0)
-    r.ImGui_DrawList_AddPolyline(dl, arr_f, 0xCC00FF88, 0, 1.5)
-    -- Pitch (neon magenta)
-    local arr_p = r.new_array(pts_pitch)
-    r.ImGui_DrawList_AddPolyline(dl, arr_p, 0x44FF00FF, 0, 4.0)
-    r.ImGui_DrawList_AddPolyline(dl, arr_p, 0xCCFF00FF, 0, 1.5)
-  end
-  
-  -- Volume (neon cyan)
-  local arr_v = r.new_array(pts_vol)
-  r.ImGui_DrawList_AddPolyline(dl, arr_v, 0x4400FFFF, 0, 4.0)
-  r.ImGui_DrawList_AddPolyline(dl, arr_v, 0xCC00FFFF, 0, 1.5)
-  
-  -- ── LEGEND ──
-  local function dot(x, y, col)
-    r.ImGui_DrawList_AddCircleFilled(dl, x, y, 3, col)
-  end
-  
-  dot(cx + 5, cy + 5, 0xFF00FFFF)
-  r.ImGui_DrawList_AddText(dl, cx + 12, cy + 1, 0xFF00FFFF, "Vol")
-  
-  if state.enable_doppler then
-    dot(cx + 5, cy + 17, 0xFF00FF88)
-    r.ImGui_DrawList_AddText(dl, cx + 12, cy + 13, 0xFF00FF88, "Filter")
-    dot(cx + 5, cy + 29, 0xFFFF00FF)
-    r.ImGui_DrawList_AddText(dl, cx + 12, cy + 25, 0xFFFF00FF, "Pitch")
   end
 
-  r.ImGui_Dummy(ctx, W, H)
+  -- Pitch curve function: same shape as volume but centered at 0.5
+  -- pitch_shift > 0 = pitch rises to peak then falls (approach)
+  -- pitch_shift < 0 = pitch dips to peak then rises (recede)
+  local pitch_fn
+  if state.pitch_shift ~= 0 then
+    local pshift = state.pitch_shift / 12.0  -- normalize to -1..1
+    pitch_fn = function(t)
+      local v = vol_fn(t)  -- 0..1 shape
+      return 0.5 + (v - 0.5) * pshift  -- scale around center
+    end
+  end
+
+  -- ── GRAIN DOTS ──
+  -- Dots whose vertical spread follows the volume envelope.
+  -- At env=0 (edges) dots cluster at the horizontal middle.
+  -- At env=1 (peak) dots expand to fill top and bottom.
+  -- Dots that would spill outside the canvas (due to elongation) are culled.
+  local density_norm = state.grain_density / 100
+  local num_grains = math.floor(50 + (250 * density_norm))
+  local grain_rgb = {0x334455, 0x553344, 0x335544}
+  local rx = 7.5 + ((state.grain_size - 10) / 490) * 67.5
+  local ry = 7.5
+  local cy_mid = cy + H * 0.5
+  local vspread = H * 0.5 - ry  -- max vertical offset so dots touch edges exactly
+
+  local function brighten(rgb)
+    local r = math.min(0xFF, ((rgb >> 16) & 0xFF) + 0x66)
+    local g = math.min(0xFF, ((rgb >> 8)  & 0xFF) + 0x66)
+    local b = math.min(0xFF, ( rgb        & 0xFF) + 0x66)
+    return (r << 16) | (g << 8) | b
+  end
+
+  for i = 1, num_grains do
+    local g = grain_vis_data[i]
+    local x = cx + (g.x_frac * W)
+    -- Cull horizontally if the elongated dot would spill
+    if x - rx < cx or x + rx > cx + W then
+      -- dot would spill; skip it
+      else
+        local env = math.max(0, math.min(1, vol_fn(g.x_frac)))
+        local y = cy_mid + (g.h_frac - 0.5) * 2.0 * vspread * env
+        -- Cull vertically (safety; formula should already fit)
+        if y - ry < cy or y + ry > cy + H then
+          -- skip
+        else
+          -- Breathing: modulate alpha only, RGB stays constant (no hue shift).
+          local phase = (preview_frame * 0.05 + g.color_idx * 1.7 + g.x_frac * 6.28) % 6.28
+          local fade = 0.5 + 0.5 * math.sin(phase)  -- 0..1
+          local fill_alpha   = math.floor(fade * 0xAA)            -- 0x00..0xAA
+          local border_alpha = math.floor(fade * 0xFF)            -- 0x00..0xFF
+          local rgb = grain_rgb[g.color_idx]
+          local fill_col   = (fill_alpha   << 24) | rgb
+          local border_col = (border_alpha << 24) | rgb
+          r.ImGui_DrawList_AddEllipseFilled(dl, x, y, rx, ry, fill_col)
+          r.ImGui_DrawList_AddEllipse(dl, x, y, rx, ry, border_col, 0, 0, 1.5)
+        end
+      end
+    end
+
+  -- ── PITCH CURVE (white line, only when pitch_shift ≠ 0) ──
+  if pitch_fn then
+    local pts_pitch = {}
+    local segments = 80
+    for i = 0, segments do
+      local t = i / segments
+      local x = cx + t * W
+      local v = pitch_fn(t)
+      pts_pitch[#pts_pitch+1] = x
+      pts_pitch[#pts_pitch+1] = cy + H - v * (H - 8) - 4
+    end
+    local arr_p = r.new_array(pts_pitch)
+    r.ImGui_DrawList_AddPolyline(dl, arr_p, 0x44FFFFFF, 0, 3.0)
+    r.ImGui_DrawList_AddPolyline(dl, arr_p, 0xCCFFFFFF, 0, 1.0)
+  end
+
+  -- ── FILTER HORIZONTAL LINES (base = green, peak = bright green) ──
+  local function hz_to_norm(hz)
+    return math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
+  end
+  local filter_base_y = cy + H - hz_to_norm(state.filter_base_freq) * (H - 8) - 4
+  local filter_peak_y = cy + H - hz_to_norm(state.filter_peak_freq) * (H - 8) - 4
+  r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x6600FF88, 1.0)
+  r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0xCC00FF88, 1.5)
+
+  -- (Spill lines are drawn after the peak dot — they need its position)
+
+  -- ── PEAK POSITION DOT (draggable: X = peak pos, Y = hold time) ──
+  local peak_dot_x = cx + state.peak_pos * W
+  local peak_dot_y = cy + H * 0.5
+  local peak_dot_ry = 8
+  local peak_dot_rx = 8 + state.hold_time * 80  -- width grows with hold time (0..0.5 → 8..48)
+  local mx, my = r.ImGui_GetMousePos(ctx)
+  local mouse_down = r.ImGui_IsMouseDown(ctx, 0)
+  local mouse_clicked = r.ImGui_IsMouseClicked(ctx, 0)
+  -- Hit test against the ellipse (approximate with bounding box + a little padding)
+  local hit_dx = math.abs(mx - peak_dot_x)
+  local hit_dy = math.abs(my - peak_dot_y)
+  local on_dot = (hit_dx < peak_dot_rx + 4) and (hit_dy < peak_dot_ry + 4)
+
+  -- Start dragging if mouse pressed on the dot
+  if mouse_clicked and on_dot then
+    peak_dragging = true
+    peak_drag_start_my = my
+    peak_drag_start_hold = state.hold_time
+  end
+  -- Stop dragging when mouse released
+  if not mouse_down then
+    peak_dragging = false
+  end
+  -- Update peak_pos (horizontal) and hold_time (vertical, relative) while dragging
+  if peak_dragging then
+    local new_t = (mx - cx) / W
+    state.peak_pos = math.max(0.01, math.min(0.99, new_t))
+    peak_dot_x = cx + state.peak_pos * W
+
+    -- Vertical drag adjusts hold time relative to drag start.
+    -- Dragging up increases, down decreases. Full canvas height = 0.5 range.
+    local drag_delta = peak_drag_start_my - my  -- positive = up
+    local hold_delta = (drag_delta / H) * 0.5
+    state.hold_time = math.max(0.0, math.min(0.5, peak_drag_start_hold + hold_delta))
+    peak_dot_rx = 8 + state.hold_time * 80
+  end
+
+  -- Draw the peak dot as an ellipse (bright blue, glowy)
+  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx + 4, peak_dot_ry + 4, 0x334488FF)  -- outer glow
+  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx,     peak_dot_ry,     0xFF4488FF)  -- body
+  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx - 4, peak_dot_ry - 4, 0xFFAACCFF)  -- highlight
+
+  -- Small directional triangles around the dot (up/down only)
+  local arr_col = 0xFFAACCFF
+  local arr_s = 4  -- triangle size
+  local arr_off = peak_dot_ry + 6  -- distance from dot center
+  -- Up: ▲
+  r.ImGui_DrawList_AddTriangleFilled(dl,
+    peak_dot_x, peak_dot_y - arr_off - arr_s,
+    peak_dot_x - arr_s, peak_dot_y - arr_off + arr_s,
+    peak_dot_x + arr_s, peak_dot_y - arr_off + arr_s, arr_col)
+  -- Down: ▼
+  r.ImGui_DrawList_AddTriangleFilled(dl,
+    peak_dot_x, peak_dot_y + arr_off + arr_s,
+    peak_dot_x - arr_s, peak_dot_y + arr_off - arr_s,
+    peak_dot_x + arr_s, peak_dot_y + arr_off - arr_s, arr_col)
+
+  -- ── RISE TENSION TRIANGLE (draggable, horizontal only) ──
+  -- Sits in the rise region (left edge to peak dot). < points left.
+  -- Near peak (right) = sharp (1.0), far from peak (left) = relaxed (-1.0).
+  local gap = 20  -- clear space around the peak dot
+  local rise_region_w = (peak_dot_x - peak_dot_rx) - gap - cx
+  -- Position: attack=-1.0 → far left, attack=1.0 → near peak (right)
+  local rise_tri_x = cx + ((1.0 - state.attack) / 2.0) * rise_region_w
+  local rise_tri_y = peak_dot_y
+  local rise_tri_s = 8  -- triangle size
+  local rise_hit = math.abs(mx - rise_tri_x) < rise_tri_s + 4 and math.abs(my - rise_tri_y) < rise_tri_s + 4
+
+  if mouse_clicked and rise_hit and not peak_dragging then
+    rise_dragging = true
+  end
+  if not mouse_down then
+    rise_dragging = false
+  end
+  if rise_dragging then
+    local new_t = (mx - cx) / rise_region_w
+    new_t = math.max(0, math.min(1, new_t))
+    -- new_t=0 (left) → 1.0 (sharp), new_t=1 (right, near peak) → -1.0 (relaxed)
+    state.attack = 1.0 - (new_t * 2.0)
+    rise_tri_x = cx + ((1.0 - state.attack) / 2.0) * rise_region_w
+  end
+
+  -- Draw the < triangle (cyan, glowy)
+  local p1x, p1y = rise_tri_x - rise_tri_s, rise_tri_y           -- left point
+  local p2x, p2y = rise_tri_x + rise_tri_s, rise_tri_y - rise_tri_s  -- top right
+  local p3x, p3y = rise_tri_x + rise_tri_s, rise_tri_y + rise_tri_s  -- bottom right
+  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0x3300CCCC)  -- glow (bigger)
+  local gs = rise_tri_s + 3
+  r.ImGui_DrawList_AddTriangleFilled(dl, rise_tri_x - gs, rise_tri_y, rise_tri_x + gs, rise_tri_y - gs, rise_tri_x + gs, rise_tri_y + gs, 0x3300CCCC)
+  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0xFF00CCCC)  -- body
+  r.ImGui_DrawList_AddTriangleFilled(dl, rise_tri_x - rise_tri_s + 3, rise_tri_y, rise_tri_x + rise_tri_s - 3, rise_tri_y - rise_tri_s + 4, rise_tri_x + rise_tri_s - 3, rise_tri_y + rise_tri_s - 4, 0xFF66EEEE)  -- highlight
+
+  -- ── FALL TENSION TRIANGLE (draggable, horizontal only) ──
+  -- Sits in the fall region (peak dot to right edge). > points right.
+  -- Near peak (left) = sharp (1.0), far from peak (right) = relaxed (-1.0).
+  local fall_region_start = peak_dot_x + peak_dot_rx + gap
+  local fall_region_w = (cx + W) - fall_region_start
+  -- Position: release=-1.0 → near peak (left), release=1.0 → far right
+  local fall_tri_x = fall_region_start + ((state.release + 1.0) / 2.0) * fall_region_w
+  local fall_tri_y = peak_dot_y
+  local fall_tri_s = 8
+  local fall_hit = math.abs(mx - fall_tri_x) < fall_tri_s + 4 and math.abs(my - fall_tri_y) < fall_tri_s + 4
+
+  if mouse_clicked and fall_hit and not peak_dragging and not rise_dragging then
+    fall_dragging = true
+  end
+  if not mouse_down then
+    fall_dragging = false
+  end
+  if fall_dragging then
+    local new_t = (mx - fall_region_start) / fall_region_w
+    new_t = math.max(0, math.min(1, new_t))
+    -- new_t=0 (left, near peak) → -1.0, new_t=1 (right, far) → 1.0
+    state.release = (new_t * 2.0) - 1.0
+    fall_tri_x = fall_region_start + ((state.release + 1.0) / 2.0) * fall_region_w
+  end
+
+  -- Draw the > triangle (cyan, glowy)
+  local fp1x, fp1y = fall_tri_x + fall_tri_s, fall_tri_y            -- right point
+  local fp2x, fp2y = fall_tri_x - fall_tri_s, fall_tri_y - fall_tri_s  -- top left
+  local fp3x, fp3y = fall_tri_x - fall_tri_s, fall_tri_y + fall_tri_s  -- bottom left
+  local fgs = fall_tri_s + 3
+  r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fgs, fall_tri_y, fall_tri_x - fgs, fall_tri_y - fgs, fall_tri_x - fgs, fall_tri_y + fgs, 0x3300CCCC)
+  r.ImGui_DrawList_AddTriangleFilled(dl, fp1x, fp1y, fp2x, fp2y, fp3x, fp3y, 0xFF00CCCC)  -- body
+  r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fall_tri_s - 3, fall_tri_y, fall_tri_x - fall_tri_s + 3, fall_tri_y - fall_tri_s + 4, fall_tri_x - fall_tri_s + 3, fall_tri_y + fall_tri_s - 4, 0xFF66EEEE)  -- highlight
+
+  -- ── SPILL LINES (draggable vertical lines, capped at halfway to peak dot) ──
+  -- Left line = front spill, right line = back spill.
+  -- spill 0.0 → at edge, spill 2.0 → halfway to peak dot.
+  local spill_max = 2.0
+  local left_cap = cx + (peak_dot_x - peak_dot_rx - cx) * 0.5
+  local right_cap = (cx + W) - ((cx + W) - (peak_dot_x + peak_dot_rx)) * 0.5
+  local left_line_x = cx + (state.front_spill / spill_max) * (left_cap - cx)
+  local right_line_x = (cx + W) - (state.back_spill / spill_max) * ((cx + W) - right_cap)
+
+  local spill_hit_w = 6
+  local left_hit = math.abs(mx - left_line_x) < spill_hit_w and my >= cy and my <= cy + H
+  local right_hit = math.abs(mx - right_line_x) < spill_hit_w and my >= cy and my <= cy + H
+
+  if mouse_clicked and left_hit and not peak_dragging and not rise_dragging and not fall_dragging then
+    spill_left_dragging = true
+  end
+  if mouse_clicked and right_hit and not peak_dragging and not rise_dragging and not fall_dragging and not spill_left_dragging then
+    spill_right_dragging = true
+  end
+  if not mouse_down then
+    spill_left_dragging = false
+    spill_right_dragging = false
+  end
+  if spill_left_dragging then
+    local new_x = math.max(cx, math.min(left_cap, mx))
+    state.front_spill = ((new_x - cx) / (left_cap - cx)) * spill_max
+    left_line_x = new_x
+  end
+  if spill_right_dragging then
+    local new_x = math.max(right_cap, math.min(cx + W, mx))
+    state.back_spill = (((cx + W) - new_x) / ((cx + W) - right_cap)) * spill_max
+    right_line_x = new_x
+  end
+
+  -- Draw spill lines (bright, with small handle dots)
+  r.ImGui_DrawList_AddLine(dl, left_line_x, cy, left_line_x, cy + H, 0x88FFFFFF, 2.0)
+  r.ImGui_DrawList_AddCircleFilled(dl, left_line_x, cy + 4, 3, 0xFFFFFFFF)
+  r.ImGui_DrawList_AddCircleFilled(dl, left_line_x, cy + H - 4, 3, 0xFFFFFFFF)
+  r.ImGui_DrawList_AddLine(dl, right_line_x, cy, right_line_x, cy + H, 0x88FFFFFF, 2.0)
+  r.ImGui_DrawList_AddCircleFilled(dl, right_line_x, cy + 4, 3, 0xFFFFFFFF)
+  r.ImGui_DrawList_AddCircleFilled(dl, right_line_x, cy + H - 4, 3, 0xFFFFFFFF)
+
+  -- ── HOVER READOUT ──
+  if not peak_dragging and not rise_dragging and not fall_dragging and not spill_left_dragging and not spill_right_dragging and mx >= cx and mx <= cx + W and my >= cy and my <= cy + H then
+    local hover_t = (mx - cx) / W
+    hover_t = math.max(0, math.min(1, hover_t))
+    local hover_x = cx + hover_t * W
+
+    r.ImGui_DrawList_AddLine(dl, hover_x, cy, hover_x, cy + H, 0x88FFFFFF, 1.0)
+
+    local hv_vol = math.max(0, math.min(1, vol_fn(hover_t)))
+    local time_s = hover_t * dur
+    r.ImGui_DrawList_AddText(dl, hover_x + 8, my - 30, 0xFFCCCCCC,
+      string.format("%.2fs\nVol: %.0f%%", time_s, hv_vol * 100))
+  end
 end
 
 ---------------------------------------------------------------------
 -- Reaper Data Functions
 ---------------------------------------------------------------------
 function refresh_source_info()
-  -- Reset counts
+  -- Reset
   state.child_count = 0
   state.folder_track = nil
   state.is_folder = false
-  state.folder_name = "None"
-  state.debug_info = {} -- Store detailed debug info
+  state.source_tracks = {}
 
   -- Get time selection
   local ts, te = r.GetSet_LoopTimeRange(false, false, 0, 0, false)
@@ -295,58 +654,31 @@ function refresh_source_info()
 
   -- Get selected track
   local sel_track = r.GetSelectedTrack(0, 0)
-  if not sel_track then 
-    table.insert(state.debug_info, "No track selected")
-    return 
-  end
-
-  -- Get track info
-  local track_num = r.GetMediaTrackInfo_Value(sel_track, 'IP_TRACKNUMBER')
-  local _, track_name = r.GetSetMediaTrackInfo_String(sel_track, 'P_NAME', '', false)
-  table.insert(state.debug_info, "Selected: Track " .. track_num .. " - " .. track_name)
+  if not sel_track then return end
 
   -- Check if it's a folder
   local folder_depth = r.GetMediaTrackInfo_Value(sel_track, 'I_FOLDERDEPTH')
-  table.insert(state.debug_info, "Folder depth: " .. folder_depth)
   
   if folder_depth == 1 then
     state.folder_track = sel_track
     state.is_folder = true
-    state.folder_name = track_name
 
-    -- Count valid children
-    -- IP_TRACKNUMBER is 1-based, GetTrack uses 0-based
+    local track_num = r.GetMediaTrackInfo_Value(sel_track, 'IP_TRACKNUMBER')
     local folder_0based_idx = track_num - 1
     local total_tracks = r.CountTracks(0)
-    table.insert(state.debug_info, "Total tracks: " .. total_tracks)
-    table.insert(state.debug_info, "Folder 0-based idx: " .. folder_0based_idx)
     
     for i = folder_0based_idx + 1, total_tracks - 1 do
       local child_track = r.GetTrack(0, i)
       if not child_track then break end
       
       local child_depth = r.GetMediaTrackInfo_Value(child_track, 'I_FOLDERDEPTH')
-      local child_num = r.GetMediaTrackInfo_Value(child_track, 'IP_TRACKNUMBER')
-      local _, child_name = r.GetSetMediaTrackInfo_String(child_track, 'P_NAME', '', false)
-      local item_count = r.CountTrackMediaItems(child_track)
-      
-      table.insert(state.debug_info, "  Child " .. child_num .. " (" .. child_name .. "): depth=" .. child_depth .. ", items=" .. item_count)
-      
-      -- If we hit end of this folder (negative depth), stop
-      -- Normal child tracks have depth=0, folder ends have depth<0
-      if child_depth < 0 then 
-        table.insert(state.debug_info, "  -> Hit end of folder (depth=" .. child_depth .. ")")
-        break 
-      end
+      if child_depth < 0 then break end
 
-      if item_count > 0 then
+      if r.CountTrackMediaItems(child_track) > 0 then
         state.child_count = state.child_count + 1
-        table.insert(state.debug_info, "  -> VALID SOURCE!")
+        state.source_tracks[#state.source_tracks + 1] = child_track
       end
     end
-    table.insert(state.debug_info, "Total valid children: " .. state.child_count)
-  else
-    table.insert(state.debug_info, "Not a folder track")
   end
 end
 
@@ -447,18 +779,8 @@ function do_generate(is_mono)
   local win_end = state.sel_end - inset_s
   local win_dur = math.max(0.001, win_end - win_start)
   
-  -- Collect valid source tracks
-  local source_tracks = {}
-  local folder_idx = r.GetMediaTrackInfo_Value(state.folder_track, 'IP_TRACKNUMBER') - 1
-  for i = folder_idx + 1, r.CountTracks(0) - 1 do
-    local track = r.GetTrack(0, i)
-    if not track then break end
-    local depth = r.GetMediaTrackInfo_Value(track, 'I_FOLDERDEPTH')
-    if depth < 0 then break end
-    if r.CountTrackMediaItems(track) > 0 then
-      table.insert(source_tracks, track)
-    end
-  end
+  -- Use cached source tracks (populated by refresh_source_info)
+  local source_tracks = state.source_tracks
   
   local grain_items = {}
   local count = 0
@@ -535,7 +857,13 @@ function do_generate(is_mono)
             
             local new_take = r.AddTakeToMediaItem(new_item)
             r.SetMediaItemTake_Source(new_take, source)
-            r.SetMediaItemTakeInfo_Value(new_take, 'D_STARTOFFS', 0)
+            local start_offs = 0.0
+            if state.pos_rnd > 0 then
+              local source_len = r.GetMediaSourceLength(source)
+              local max_offs = math.max(0.0, source_len - item_len)
+              start_offs = math.random() * state.pos_rnd * max_offs
+            end
+            r.SetMediaItemTakeInfo_Value(new_take, 'D_STARTOFFS', start_offs)
             
             table.insert(grain_items, new_item)
             count = count + 1
@@ -805,78 +1133,43 @@ function do_render()
   r.Undo_EndBlock("GranularWhoosh: Render " .. state.temp_track_name, -1)
 end
 
-function get_or_add_comp_fx(track)
+function get_or_add_fx(track, search, ...)
   local cnt = r.TrackFX_GetCount(track)
   for i = 0, cnt - 1 do
     local _, nm = r.TrackFX_GetFXName(track, i)
-    if nm:find('ReaComp', 1, true) then
+    if nm:find(search, 1, true) then
       return i
     end
   end
-  local idx = r.TrackFX_AddByName(track, 'JS: ReaComp', false, -1)
-  if idx < 0 then
-    idx = r.TrackFX_AddByName(track, 'VST: ReaComp (Cockos)', false, -1)
+  local add_names = {...}
+  for _, name in ipairs(add_names) do
+    local idx = r.TrackFX_AddByName(track, name, false, -1)
+    if idx >= 0 then return idx end
   end
-  if idx < 0 then
-    idx = r.TrackFX_AddByName(track, 'VST3: ReaComp (Cockos)', false, -1)
-  end
-  return idx
+  return -1
 end
 
-function apply_comp(track, strength)
-  local fx_idx = get_or_add_comp_fx(track)
-  if fx_idx < 0 then return end
-  r.TrackFX_SetEnabled(track, fx_idx, true)
+local function calc_env_bounds(sel_start, sel_end)
+  local duration = sel_end - sel_start
+  if duration <= 0 then return nil end
 
-  if strength <= 0 then
-    -- Bypass when slider is at 0
-    r.TrackFX_SetEnabled(track, fx_idx, false)
-    return
+  local env_start = sel_start - state.front_spill
+  local env_end   = sel_end   + state.back_spill
+
+  local hold_s      = duration * state.hold_time
+  local peak_center = sel_start + duration * state.peak_pos
+  local peak_start  = math.max(env_start, peak_center - hold_s / 2)
+  local peak_end    = math.min(env_end,   peak_start  + hold_s)
+
+  if peak_end > env_end then
+    peak_end   = env_end
+    peak_start = math.max(env_start, peak_end - hold_s)
   end
 
-  local threshold_norm = 1.0 - (strength / 100.0)
-  local ratio_norm = strength / 100.0
-  local attack_norm = 0.05
-  local release_norm = 0.1
-  local rms_norm = 0.0
-  local makeup_norm = 0.5
+  local att = math.max(-1.0, math.min(1.0, state.attack))
+  local rel = math.max(-1.0, math.min(1.0, state.release))
 
-  r.TrackFX_SetParamNormalized(track, fx_idx, 0, threshold_norm)
-  r.TrackFX_SetParamNormalized(track, fx_idx, 1, ratio_norm)
-  r.TrackFX_SetParamNormalized(track, fx_idx, 2, attack_norm)
-  r.TrackFX_SetParamNormalized(track, fx_idx, 3, release_norm)
-  r.TrackFX_SetParamNormalized(track, fx_idx, 4, rms_norm)
-  r.TrackFX_SetParamNormalized(track, fx_idx, 5, makeup_norm)
-end
-
-function get_or_add_pitch_fx(track)
-  local cnt = r.TrackFX_GetCount(track)
-  for i = 0, cnt - 1 do
-    local _, nm = r.TrackFX_GetFXName(track, i)
-    if nm:find('ReaPitch', 1, true) then
-      return i
-    end
-  end
-  local idx = r.TrackFX_AddByName(track, 'VST: ReaPitch (Cockos)', false, -1)
-  if idx < 0 then
-    idx = r.TrackFX_AddByName(track, 'VST3: ReaPitch (Cockos)', false, -1)
-  end
-  return idx
-end
-
-function get_or_add_filter_fx(track)
-  local cnt = r.TrackFX_GetCount(track)
-  for i = 0, cnt - 1 do
-    local _, nm = r.TrackFX_GetFXName(track, i)
-    if nm:find('ReaEQ', 1, true) then
-      return i
-    end
-  end
-  local idx = r.TrackFX_AddByName(track, 'VST: ReaEQ (Cockos)', false, -1)
-  if idx < 0 then
-    idx = r.TrackFX_AddByName(track, 'VST3: ReaEQ (Cockos)', false, -1)
-  end
-  return idx
+  return env_start, env_end, peak_start, peak_end, att, rel
 end
 
 local function write_doppler_env(env, v_floor, v_peak, v_floor_end, env_start, peak_start, peak_end, env_end, att, rel)
@@ -906,47 +1199,28 @@ function apply_doppler_envelopes()
   if not temp_track then return end
   if not state.has_generated_item then return end
 
-  local sel_start = state.generated_start
-  local sel_end = state.generated_end
-  local duration = sel_end - sel_start
-  if duration <= 0 then return end
-
-  local env_start = sel_start - state.front_spill
-  local env_end = sel_end + state.back_spill
-
-  local hold_s = duration * state.hold_time
-  local peak_center = sel_start + duration * state.peak_pos
-  local anchor_start = math.max(env_start, peak_center - hold_s / 2)
-  local anchor_end = math.min(env_end, anchor_start + hold_s)
-
-  if anchor_end > env_end then
-    anchor_end = env_end
-    anchor_start = math.max(env_start, anchor_end - hold_s)
-  end
-
-  local att = math.max(-1.0, math.min(1.0, state.attack))
-  local rel = math.max(-1.0, math.min(1.0, state.release))
+  local env_start, env_end, anchor_start, anchor_end, att, rel = calc_env_bounds(state.generated_start, state.generated_end)
+  if not env_start then return end
 
   -- Pitch envelope
-  local pitch_idx = get_or_add_pitch_fx(temp_track)
+  local pitch_idx = get_or_add_fx(temp_track, 'ReaPitch', 'VST: ReaPitch (Cockos)', 'VST3: ReaPitch (Cockos)')
   if pitch_idx >= 0 then
     r.TrackFX_SetEnabled(temp_track, pitch_idx, true)
     local pitch_env = r.GetFXEnvelope(temp_track, pitch_idx, 0, true)
     if pitch_env then
-      local st = math.max(0.0, math.min(24.0, state.pitch_range))
-      local centre = 24 / 48
-      local signed = (state.pitch_direction == 1) and st or -st
-      local peak_n = (signed + 24) / 48
-      
-      local p_start = math.max(env_start, math.min(env_end, anchor_start + state.pitch_peak_offset))
-      local p_end = math.max(env_start, math.min(env_end, anchor_end + state.pitch_peak_offset))
-      
+      local st = state.pitch_shift  -- -12..+12
+      local centre = 24 / 48  -- 0 semitones in normalized form
+      local peak_n = (st + 24) / 48  -- signed shift at the peak
+
+      local p_start = anchor_start
+      local p_end = anchor_end
+
       write_doppler_env(pitch_env, centre, peak_n, centre, env_start, p_start, p_end, env_end, att, rel)
     end
   end
 
   -- Filter envelope (ReaEQ lowpass)
-  local filter_idx = get_or_add_filter_fx(temp_track)
+  local filter_idx = get_or_add_fx(temp_track, 'ReaEQ', 'VST: ReaEQ (Cockos)', 'VST3: ReaEQ (Cockos)')
   if filter_idx >= 0 then
     r.TrackFX_SetEnabled(temp_track, filter_idx, true)
     r.TrackFX_SetParam(temp_track, filter_idx, 12, 0.0)
@@ -962,8 +1236,8 @@ function apply_doppler_envelopes()
       local norm_base = hz_to_norm(state.filter_base_freq)
       local norm_peak = hz_to_norm(state.filter_peak_freq)
       
-      local f_start = math.max(env_start, math.min(env_end, anchor_start + state.filter_peak_offset))
-      local f_end = math.max(env_start, math.min(env_end, anchor_end + state.filter_peak_offset))
+      local f_start = anchor_start
+      local f_end = anchor_end
       
       write_doppler_env(filter_env, norm_base, norm_peak, norm_base, env_start, f_start, f_end, env_end, att, rel)
     end
@@ -978,14 +1252,14 @@ function apply_doppler_envelopes()
   end
   
   if pan_env then
-    local pn_start = math.max(env_start, math.min(env_end, anchor_start + state.pan_peak_offset))
-    local pn_end = math.max(env_start, math.min(env_end, anchor_end + state.pan_peak_offset))
+    local pn_start = anchor_start
+    local pn_end = anchor_end
     
     if state.is_mono then
       write_doppler_env(pan_env, 0.0, 0.0, 0.0, env_start, pn_start, pn_end, env_end, att, rel)
     else
-      local str = state.pan_strength
-      local sign = (state.pan_direction == 1) and 1 or -1
+      local str = math.abs(state.pan_value)
+      local sign = (state.pan_value < 0) and 1 or -1  -- negative = L→R (sign 1), positive = R→L (sign -1)
       write_doppler_env(pan_env, -str * sign, 0.0, str * sign, env_start, pn_start, pn_end, env_end, att, rel)
     end
   end
@@ -995,11 +1269,6 @@ function apply_volume_envelope()
   local temp_track, _ = find_temp_track()
   if not temp_track then return end
   if not state.has_generated_item then return end
-
-  local sel_start = state.generated_start
-  local sel_end = state.generated_end
-  local duration = sel_end - sel_start
-  if duration <= 0 then return end
 
   r.SetMediaTrackInfo_Value(temp_track, 'I_AUTOMODE', 1)
 
@@ -1011,43 +1280,14 @@ function apply_volume_envelope()
   end
   if not vol_env then return end
 
+  local env_start, env_end, peak_start, peak_end, att, rel = calc_env_bounds(state.generated_start, state.generated_end)
+  if not env_start then return end
+
   local env_min = r.ScaleToEnvelopeMode(1, 0.0)
   local env_max = r.ScaleToEnvelopeMode(1, 1.0)
 
-  local n = r.CountEnvelopePoints(vol_env)
-  for i = n - 1, 0, -1 do
-    r.DeleteEnvelopePointEx(vol_env, -1, i)
-  end
+  write_doppler_env(vol_env, env_min, env_max, env_min, env_start, peak_start, peak_end, env_end, att, rel)
 
-  local env_start = sel_start - state.front_spill
-  local env_end = sel_end + state.back_spill
-
-  local hold_s = duration * state.hold_time
-  local peak_center = sel_start + duration * state.peak_pos
-  local peak_start = math.max(env_start, peak_center - hold_s / 2)
-  local peak_end = math.min(env_end, peak_start + hold_s)
-
-  if peak_end > env_end then
-    peak_end = env_end
-    peak_start = math.max(env_start, peak_end - hold_s)
-  end
-
-  local att = math.max(-1.0, math.min(1.0, state.attack))
-  local rel = math.max(-1.0, math.min(1.0, state.release))
-
-  if math.abs(peak_start - peak_end) > 0.001 then
-    r.InsertEnvelopePoint(vol_env, env_start,  env_min, 5,  att, false, false)
-    r.InsertEnvelopePoint(vol_env, peak_start, env_max, 0,  0.0, false, false)
-    r.InsertEnvelopePoint(vol_env, peak_end,   env_max, 5, -rel, false, false)
-    r.InsertEnvelopePoint(vol_env, env_end,    env_min, 5,  0.0, false, false)
-  else
-    r.InsertEnvelopePoint(vol_env, env_start,  env_min, 5,  att, false, false)
-    r.InsertEnvelopePoint(vol_env, peak_start, env_max, 5, -rel, false, false)
-    r.InsertEnvelopePoint(vol_env, env_end,    env_min, 5,  0.0, false, false)
-  end
-
-  r.Envelope_SortPoints(vol_env)
-  apply_comp(temp_track, state.comp_strength)
   apply_doppler_envelopes()
   r.TrackList_AdjustWindows(false)
   r.UpdateArrange()
@@ -1056,57 +1296,263 @@ end
 ---------------------------------------------------------------------
 -- Main Draw Loop
 ---------------------------------------------------------------------
+local started = false      -- true once the window has been drawn at least once
+local hidden_frames = 0    -- consecutive frames the window reported not visible
+local win_w, win_h = 640, 620  -- cached window size from previous frame
+
 function loop()
   refresh_source_info()
 
-  r.ImGui_SetNextWindowSize(ctx, 640, 540, r.ImGui_Cond_FirstUseEver())
+  r.ImGui_SetNextWindowSize(ctx, 640, 620, r.ImGui_Cond_FirstUseEver())
+
+  -- Push theme BEFORE Begin so Col_WindowBg applies to the window itself
+  -- (ImGui reads background color at Begin time from the active stack).
+  push_theme()
   local vis, open = r.ImGui_Begin(ctx, 'GranularWhoosh v1.0.0', true, r.ImGui_WindowFlags_NoCollapse())
 
   if vis then
-    local table_flags = r.ImGui_TableFlags_SizingStretchSame()
+    local table_flags = r.ImGui_TableFlags_SizingStretchProp()
     
     if r.ImGui_BeginTable(ctx, "MainLayout", 3, table_flags) then
+      r.ImGui_TableSetupColumn(ctx, "Source", r.ImGui_TableColumnFlags_WidthStretch(), 1.0)
+      r.ImGui_TableSetupColumn(ctx, "Middle", r.ImGui_TableColumnFlags_WidthStretch(), 2.6)
+      r.ImGui_TableSetupColumn(ctx, "Output", r.ImGui_TableColumnFlags_WidthStretch(), 1.0)
       r.ImGui_TableNextRow(ctx)
       
       -- COLUMN 1: SOURCE / SAMPLING
       r.ImGui_TableNextColumn(ctx)
-      r.ImGui_Text(ctx, "SOURCE / SAMPLING")
-      r.ImGui_Separator(ctx)
-      r.ImGui_Spacing(ctx)
-      
-      state.sampling_mode = labeled_combo("Sampling Mode", state.sampling_mode, SAMPLING_MODES)
+      section_header("GRAINS")
+
+      r.ImGui_Text(ctx, "Sampling Mode")
+      -- Two-button toggle: Uniform / Sequential
+      local half_w = (r.ImGui_GetContentRegionAvail(ctx) - 4) * 0.5
+      if state.sampling_mode == 0 then
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x1A6666FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x229999FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x2DBBBBFF)
+      else
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x333344FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x444466FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x555577FF)
+      end
+      if r.ImGui_Button(ctx, "Uniform", half_w, 0) then state.sampling_mode = 0 end
+      r.ImGui_PopStyleColor(ctx, 3)
+      r.ImGui_SameLine(ctx, 0, 4)
+      if state.sampling_mode == 1 then
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x1A6666FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x229999FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x2DBBBBFF)
+      else
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x333344FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x444466FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x555577FF)
+      end
+      if r.ImGui_Button(ctx, "Sequential", half_w, 0) then state.sampling_mode = 1 end
+      r.ImGui_PopStyleColor(ctx, 3)
+      show_tooltip("Uniform: grains cycle through all sources with random offsets.\nSequential: each source plays once in order, auto-sized to fit.")
+
+      r.ImGui_Text(ctx, "Sampling Direction")
+      local dir_half_w = (r.ImGui_GetContentRegionAvail(ctx) - 4) * 0.5
+      for row = 0, 1 do
+        for col = 0, 1 do
+          local idx = row * 2 + col + 1  -- 1-based playback_mode
+          if col > 0 then r.ImGui_SameLine(ctx, 0, 4) end
+
+          -- When Random (idx 4) is the active mode, its cell becomes a slider
+          -- instead of a button. Clicking another direction restores the button.
+          if idx == 4 and state.playback_mode == 4 then
+            r.ImGui_SetNextItemWidth(ctx, dir_half_w)
+            local _, new_rnd = r.ImGui_SliderDouble(ctx, '##posrnd', state.pos_rnd, 0, 1, "Rnd %.2f")
+            if r.ImGui_IsItemHovered(ctx) and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
+              state.pos_rnd = 0.15
+            end
+            if r.ImGui_IsItemHovered(ctx) then
+              show_tooltip("Random offset in the source read-head per grain.\nIn Uniform: jitters the sweep position.\nIn Sequential: randomizes where in each source the grain reads from.\nDouble-click to reset.")
+            end
+          else
+            if state.playback_mode == idx then
+              r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x1A6666FF)
+              r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x229999FF)
+              r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x2DBBBBFF)
+            else
+              r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x333344FF)
+              r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x444466FF)
+              r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x555577FF)
+            end
+            if r.ImGui_Button(ctx, PLAYBACK_MODES[idx], dir_half_w, 0) then
+              state.playback_mode = idx
+            end
+            r.ImGui_PopStyleColor(ctx, 3)
+          end
+        end
+      end
+      show_tooltip("Order in which sources are read: Forward, Reverse, Ping-Pong, or Random.")
       r.ImGui_Separator(ctx)
 
-      state.grain_size = labeled_slider("Grain Size", state.grain_size, 10, 500, "%.0f ms")
-      state.grain_density = labeled_slider("Grain Density", state.grain_density, 0, 100, "%.0f%%")
-      r.ImGui_TextDisabled(ctx, string.format("  = %.0f%% overlap", state.grain_density))
-      
-      r.ImGui_Separator(ctx)
-      state.pos_rnd = labeled_slider("Positional Randomness", state.pos_rnd, 0, 1, "%.2f")
-      state.randomness = labeled_slider("Pitch/Direction Randomness", state.randomness, 0, 1, "%.2f")
-      state.playback_mode = labeled_combo("Sampling Direction", state.playback_mode, PLAYBACK_MODES)
+      local new_density, new_size, _ = xy_pad("Grain",
+        state.grain_density, 0, 100,
+        state.grain_size, 10, 500,
+        "%.0f%%", "%.0fms",
+        "X = Grain Density (overlap).\nY = Grain Size (duration, Uniform only).\nClick and drag to adjust both.",
+        "Density", "Size")
+      state.grain_density = new_density
+      state.grain_size = new_size
 
-      -- COLUMN 2: VOLUME ENVELOPE
+      -- COLUMN 2: VISUALIZER + VOLUME ENVELOPE
       r.ImGui_TableNextColumn(ctx)
-      r.ImGui_Text(ctx, "VOLUME ENVELOPE")
-      r.ImGui_Separator(ctx)
+
+      -- Pitch vertical slider on the left of the visualizer
+      r.ImGui_SetNextItemWidth(ctx, 20)
+      local _, new_pitch = r.ImGui_VSliderDouble(ctx, '##pitch', 20, 160, state.pitch_shift, -12, 12, "%.0f")
+      if r.ImGui_IsItemHovered(ctx) and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
+        state.pitch_shift = 0.0
+      end
+      if r.ImGui_IsItemHovered(ctx) then
+        show_tooltip("Pitch shift at the peak (semitones).\n+ = approach (up then down)\n- = recede (down then up)\n0 = no pitch envelope.\nDouble-click to reset.")
+      end
+      state.pitch_shift = new_pitch
+      r.ImGui_SameLine(ctx)
+
+      draw_preview(24)
+      r.ImGui_SameLine(ctx)
+
+      -- Dual-knob filter slider on the right of the visualizer
+      local fslider_w = 20
+      local fslider_h = 160
+      r.ImGui_InvisibleButton(ctx, '##filter_slider', fslider_w, fslider_h)
+      local fs_cx, fs_cy = r.ImGui_GetItemRectMin(ctx)
+      local fs_dl = r.ImGui_GetWindowDrawList(ctx)
+      local fs_mx, fs_my = r.ImGui_GetMousePos(ctx)
+      local fs_active = r.ImGui_IsItemActive(ctx)
+      local fs_hovered = r.ImGui_IsItemHovered(ctx)
+
+      -- Track (background)
+      r.ImGui_DrawList_AddRectFilled(fs_dl, fs_cx + 6, fs_cy, fs_cx + 14, fs_cy + fslider_h, 0xFF1E1E2E, 3)
+      r.ImGui_DrawList_AddRect(fs_dl, fs_cx + 6, fs_cy, fs_cx + 14, fs_cy + fslider_h, 0xFF2A2A3A, 3)
+
+      -- Frequency range is logarithmic: 20Hz..20000Hz
+      local function hz_to_y(hz)
+        local n = math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
+        return fs_cy + fslider_h - n * fslider_h
+      end
+      local function y_to_hz(y)
+        local n = math.max(0.0, math.min(1.0, (fs_cy + fslider_h - y) / fslider_h))
+        return 20.0 * (24000.0 / 20.0) ^ n
+      end
+
+      local top_knob_y = hz_to_y(state.filter_peak_freq)    -- peak (higher freq = higher up)
+      local bot_knob_y = hz_to_y(state.filter_base_freq)    -- base (lower freq = lower down)
+
+      -- Fill between knobs (active filter range)
+      r.ImGui_DrawList_AddRectFilled(fs_dl, fs_cx + 7, top_knob_y, fs_cx + 13, bot_knob_y, 0x4400FF88, 2)
+
+      -- Determine which knob to drag
+      local mouse_clicked = r.ImGui_IsMouseClicked(ctx, 0)
+      local mouse_down = r.ImGui_IsMouseDown(ctx, 0)
+      local dist_top = math.abs(fs_my - top_knob_y)
+      local dist_bot = math.abs(fs_my - bot_knob_y)
+
+      if mouse_clicked and (fs_active or fs_hovered) then
+        if dist_top < dist_bot and dist_top < 12 then
+          filter_top_dragging = true
+        elseif dist_bot < 12 then
+          filter_bottom_dragging = true
+        end
+      end
+      if not mouse_down then
+        filter_top_dragging = false
+        filter_bottom_dragging = false
+      end
+
+      -- Min gap between knobs (in Hz) to prevent overlap
+      local min_hz_gap = 100.0
+
+      if filter_top_dragging then
+        local new_y = math.max(fs_cy, math.min(bot_knob_y - 4, fs_my))
+        local new_hz = y_to_hz(new_y)
+        -- Clamp: peak must stay above base + gap, and within 1000..20000
+        new_hz = math.max(state.filter_base_freq + min_hz_gap, math.min(20000.0, new_hz))
+        state.filter_peak_freq = new_hz
+      end
+      if filter_bottom_dragging then
+        local new_y = math.min(fs_cy + fslider_h, math.max(top_knob_y + 4, fs_my))
+        local new_hz = y_to_hz(new_y)
+        -- Clamp: base must stay below peak - gap, and within 20..2000
+        new_hz = math.min(state.filter_peak_freq - min_hz_gap, math.max(20.0, new_hz))
+        state.filter_base_freq = new_hz
+      end
+
+      -- Recompute knob positions after drag
+      top_knob_y = hz_to_y(state.filter_peak_freq)
+      bot_knob_y = hz_to_y(state.filter_base_freq)
+
+      -- Draw knobs (top = bright green, bottom = dim green)
+      r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, top_knob_y, 7, 0xFF00FF88)
+      r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, top_knob_y, 4, 0xFFAAFFDD)
+      r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, bot_knob_y, 7, 0xFF008844)
+      r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, bot_knob_y, 4, 0xFF44AA88)
+
+      if fs_hovered or filter_top_dragging or filter_bottom_dragging then
+        show_tooltip(string.format("Peak: %.0f Hz\nBase: %.0f Hz", state.filter_peak_freq, state.filter_base_freq))
+      end
+
+      -- Pan slider below the visualizer
+      -- Center = 0 (off), left = L→R sweep, right = R→L sweep, edges = 100% strength
       r.ImGui_Spacing(ctx)
+      r.ImGui_Text(ctx, "Pan")
+      r.ImGui_SetNextItemWidth(ctx, -1)
+      local _, new_pan = r.ImGui_SliderDouble(ctx, '##pan', state.pan_value, -1.0, 1.0, "%.2f")
+      if r.ImGui_IsItemHovered(ctx) and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
+        state.pan_value = 0.0
+      end
+      if r.ImGui_IsItemHovered(ctx) then
+        show_tooltip("Center = no pan sweep.\nLeft = L→R sweep.\nRight = R→L sweep.\nEdges = 100% strength.\nDouble-click to reset.")
+      end
+      state.pan_value = new_pan
+
+      r.ImGui_Spacing(ctx)
+      section_header("WOOSH")
       
-      state.peak_pos = labeled_slider("Peak Position", state.peak_pos, 0.01, 0.99, "%.2f")
-      state.hold_time = labeled_slider("Hold Time", state.hold_time, 0, 0.5, "%.2f")
-      state.attack = labeled_slider("Rise Tension", state.attack, -1.0, 1.0, "%.2f")
-      state.release = labeled_slider("Fall Tension", state.release, -1.0, 1.0, "%.2f")
-      state.front_spill = labeled_slider("Front Spill", state.front_spill, 0, 2.0, "%.2f s")
-      state.back_spill = labeled_slider("Back Spill", state.back_spill, 0, 2.0, "%.2f s")
-      state.comp_strength = labeled_slider("Compression", state.comp_strength, 0, 100, "%.0f%%")
+      if r.ImGui_BeginTable(ctx, "VolEnvLayout", 2, r.ImGui_TableFlags_SizingStretchSame()) then
+        r.ImGui_TableNextRow(ctx)
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+        r.ImGui_TableNextColumn(ctx)
+        r.ImGui_Dummy(ctx, 1, 1)
+
+        r.ImGui_EndTable(ctx)
+      end
 
       -- COLUMN 3: OUTPUT / GENERATION
       r.ImGui_TableNextColumn(ctx)
-      r.ImGui_Text(ctx, "OUTPUT / GENERATION")
-      r.ImGui_Separator(ctx)
-      r.ImGui_Spacing(ctx)
+      section_header("OUTPUT / GENERATION")
       
-      state.inset = labeled_slider("Inset", state.inset, 0, 0.45, "%.2f")
+      state.inset = labeled_slider("Inset", state.inset, 0, 0.45, "%.2f", 0.0,
+        "Shrinks the grain window inside the time selection.\nLonger source sampling, quicker-sounding whoosh.")
       r.ImGui_Spacing(ctx)
       
       r.ImGui_Text(ctx, "Track Name")
@@ -1116,7 +1562,14 @@ function loop()
       r.ImGui_Spacing(ctx)
       
       r.ImGui_Text(ctx, "Status:")
-      r.ImGui_TextDisabled(ctx, state.status_msg)
+      local msg = state.status_msg or ""
+      local status_col = 0x888899FF
+      if msg:find("Error") then
+        status_col = 0xCC4444FF
+      elseif msg:find("Done") or msg:find("Rendered") or msg:find("Resampled") then
+        status_col = 0x44CC88FF
+      end
+      r.ImGui_TextColored(ctx, status_col, msg)
       r.ImGui_Spacing(ctx)
       
       local can_generate = state.is_folder and state.child_count > 0 and state.sel_duration > 0 and not state.is_generating
@@ -1151,7 +1604,7 @@ function loop()
       
       if not can_resample then r.ImGui_BeginDisabled(ctx) end
       
-      r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0xFF4488AA)
+      r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x4488AAFF)
       if r.ImGui_Button(ctx, "RENDER", -1, 36) then
         do_render()
       end
@@ -1162,55 +1615,42 @@ function loop()
       r.ImGui_EndTable(ctx)
     end
     
-    -- DOPPLER ROW
-    r.ImGui_Text(ctx, "DOPPLER")
-    r.ImGui_SameLine(ctx)
-    local changed, val = r.ImGui_Checkbox(ctx, "Enable##doppler", state.enable_doppler)
-    if changed then state.enable_doppler = val end
-    r.ImGui_Separator(ctx)
-    
-    if r.ImGui_BeginTable(ctx, "DopplerLayout", 3, r.ImGui_TableFlags_SizingStretchSame()) then
-      -- Pitch column
-      r.ImGui_TableNextRow(ctx)
-      r.ImGui_TableNextColumn(ctx)
-      r.ImGui_Text(ctx, "PITCH")
-      r.ImGui_Separator(ctx)
-      
-      state.pitch_range = labeled_slider("Intensity", state.pitch_range, 0, 24, "%.1f st")
-      state.pitch_direction = labeled_combo("Pitch Dir", state.pitch_direction, PITCH_DIRS)
-      state.pitch_peak_offset = labeled_slider("Pitch Offset", state.pitch_peak_offset, -1.0, 1.0, "%.2f s")
-      
-      -- Filter column
-      r.ImGui_TableNextColumn(ctx)
-      r.ImGui_Text(ctx, "FILTER")
-      r.ImGui_Separator(ctx)
-      
-      state.filter_base_freq = labeled_slider("Base Freq", state.filter_base_freq, 20, 2000, "%.0f Hz")
-      state.filter_peak_freq = labeled_slider("Peak Freq", state.filter_peak_freq, 1000, 20000, "%.0f Hz")
-      state.filter_peak_offset = labeled_slider("Filter Offset", state.filter_peak_offset, -1.0, 1.0, "%.2f s")
-      
-      -- Pan column
-      r.ImGui_TableNextColumn(ctx)
-      r.ImGui_Text(ctx, "PAN")
-      r.ImGui_Separator(ctx)
-      
-      state.pan_strength = labeled_slider("Strength", state.pan_strength, 0, 1.0, "%.2f")
-      state.pan_direction = labeled_combo("Pan Dir", state.pan_direction, PAN_DIRS)
-      state.pan_peak_offset = labeled_slider("Pan Offset", state.pan_peak_offset, -1.0, 1.0, "%.2f s")
-      
-      r.ImGui_EndTable(ctx)
+    -- Cache window size for next frame
+    win_w, win_h = r.ImGui_GetWindowSize(ctx)
+
+    r.ImGui_End(ctx)
+  end
+
+  -- Pop the main window's theme AFTER End so it covered Begin→End.
+  pop_theme()
+
+  -- Track real window visibility. `open` only flips false on the floating
+  -- close (X) button; a docked window whose tab is dismissed (or any hidden
+  -- state) surfaces as vis==false from Begin. We must not call End when
+  -- vis==false, and we use the same signal to detect actual window loss.
+  if vis then
+    started = true
+    hidden_frames = 0
+  else
+    hidden_frames = hidden_frames + 1
+  end
+
+  -- Terminate the defer chain once the window is genuinely gone: either the
+  -- user clicked the close button (open==false) or the window has stayed
+  -- hidden for a brief grace period (docked tab dismissed / window hidden).
+  -- The grace absorbs one-frame invisibility during dock transitions.
+  local closed = (not open) or (started and hidden_frames > 15)
+
+  if closed then
+    -- ReaImGui reclaims the context when the script ends; destroy it
+    -- explicitly on the next tick if the API is available.
+    if r.ImGui_DestroyContext then
+      r.defer(function() r.ImGui_DestroyContext(ctx) end)
     end
-    
-    -- PREVIEW VISUALIZER
-    r.ImGui_Spacing(ctx)
-    draw_preview()
+    return
   end
 
-  r.ImGui_End(ctx)
-
-  if open then
-    r.defer(loop)
-  end
+  r.defer(loop)
 end
 
 r.defer(loop)
