@@ -1353,18 +1353,48 @@ function loop()
   if vis then
     local table_flags = r.ImGui_TableFlags_SizingStretchProp()
     
-    if r.ImGui_BeginTable(ctx, "MainLayout", 3, table_flags) then
-      r.ImGui_TableSetupColumn(ctx, "Source", r.ImGui_TableColumnFlags_WidthStretch(), 1.0)
-      r.ImGui_TableSetupColumn(ctx, "Middle", r.ImGui_TableColumnFlags_WidthStretch(), 2.6)
-      r.ImGui_TableSetupColumn(ctx, "Output", r.ImGui_TableColumnFlags_WidthStretch(), 1.0)
+    -- ════════════════════════════════════════════════════════════════
+    -- TOP ROW: 3 columns — (Identity/Status) (Sampling) (Output buttons)
+    -- ════════════════════════════════════════════════════════════════
+    if r.ImGui_BeginTable(ctx, "TopRow", 3, table_flags) then
+      r.ImGui_TableSetupColumn(ctx, "Identity", r.ImGui_TableColumnFlags_WidthStretch(), 1.3)
+      r.ImGui_TableSetupColumn(ctx, "Sampling", r.ImGui_TableColumnFlags_WidthStretch(), 1.1)
+      r.ImGui_TableSetupColumn(ctx, "Output",  r.ImGui_TableColumnFlags_WidthStretch(), 1.0)
       r.ImGui_TableNextRow(ctx)
-      
-      -- COLUMN 1: SOURCE / SAMPLING
+
+      -- ── COLUMN 1: IDENTITY / STATUS ──
+      r.ImGui_TableNextColumn(ctx)
+      local tb_h = 30
+      local id_avail = r.ImGui_GetContentRegionAvail(ctx)
+      r.ImGui_InvisibleButton(ctx, '##titleblock', id_avail, tb_h)
+      local tminx, tminy = r.ImGui_GetItemRectMin(ctx)
+      local tdl = r.ImGui_GetWindowDrawList(ctx)
+      local sq = tb_h - 4
+      r.ImGui_DrawList_AddRectFilled(tdl, tminx, tminy, tminx + sq, tminy + sq, theme.Button, 4)
+      r.ImGui_DrawList_AddRectFilled(tdl, tminx + 6, tminy + 6, tminx + sq - 6, tminy + sq - 6, theme.SliderGrab, 3)
+      r.ImGui_DrawList_AddText(tdl, tminx + sq + 8, tminy + 5, theme.Text, "GranularWhoosh")
+      r.ImGui_DrawList_AddText(tdl, tminx + sq + 8, tminy + 19, theme.TextDisabled,
+        string.format("%.2fs  ·  %d track%s", state.sel_duration, state.child_count, state.child_count == 1 and "" or "s"))
+      r.ImGui_Spacing(ctx)
+      r.ImGui_Text(ctx, "Track Name")
+      r.ImGui_SetNextItemWidth(ctx, -1)
+      local _, new_name = r.ImGui_InputText(ctx, '##tempname', state.temp_track_name)
+      state.temp_track_name = new_name
+      r.ImGui_Spacing(ctx)
+      r.ImGui_Text(ctx, "Status:")
+      local msg = state.status_msg or ""
+      local status_col = 0x888899FF
+      if msg:find("Error") then
+        status_col = 0xCC4444FF
+      elseif msg:find("Done") or msg:find("Rendered") or msg:find("Resampled") then
+        status_col = 0x44CC88FF
+      end
+      r.ImGui_TextColored(ctx, status_col, msg)
+
+      -- ── COLUMN 2: SAMPLING ──
       r.ImGui_TableNextColumn(ctx)
       section_header("GRAINS")
-
       r.ImGui_Text(ctx, "Sampling Mode")
-      -- Two-button toggle: Uniform / Sequential
       local half_w = (r.ImGui_GetContentRegionAvail(ctx) - 4) * 0.5
       if state.sampling_mode == 0 then
         r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x1A6666FF)
@@ -1395,11 +1425,8 @@ function loop()
       local dir_half_w = (r.ImGui_GetContentRegionAvail(ctx) - 4) * 0.5
       for row = 0, 1 do
         for col = 0, 1 do
-          local idx = row * 2 + col + 1  -- 1-based playback_mode
+          local idx = row * 2 + col + 1
           if col > 0 then r.ImGui_SameLine(ctx, 0, 4) end
-
-          -- When Random (idx 4) is the active mode, its cell becomes a slider
-          -- instead of a button. Clicking another direction restores the button.
           if idx == 4 and state.playback_mode == 4 then
             r.ImGui_SetNextItemWidth(ctx, dir_half_w)
             local _, new_rnd = r.ImGui_SliderDouble(ctx, '##posrnd', state.pos_rnd, 0, 1, "Rnd %.2f")
@@ -1427,8 +1454,47 @@ function loop()
         end
       end
       show_tooltip("Order in which sources are read: Forward, Reverse, Ping-Pong, or Random.")
-      r.ImGui_Separator(ctx)
 
+      -- ── COLUMN 3: OUTPUT BUTTONS ──
+      r.ImGui_TableNextColumn(ctx)
+      section_header("OUTPUT / GENERATION")
+      local can_generate = state.is_folder and state.child_count > 0 and state.sel_duration > 0 and not state.is_generating
+      if not can_generate then r.ImGui_BeginDisabled(ctx) end
+      if r.ImGui_Button(ctx, "GENERATE STEREO", -1, 28) then do_generate(false) end
+      r.ImGui_Spacing(ctx)
+      if r.ImGui_Button(ctx, "GENERATE MONO", -1, 28) then do_generate(true) end
+      if not can_generate then r.ImGui_EndDisabled(ctx) end
+      r.ImGui_Spacing(ctx)
+      r.ImGui_Separator(ctx)
+      r.ImGui_Spacing(ctx)
+      local can_resample = state.has_generated_item
+      if not can_resample then r.ImGui_BeginDisabled(ctx) end
+      if r.ImGui_Button(ctx, "RESAMPLE TO FOLDER", -1, 28) then do_resample() end
+      if not can_resample then r.ImGui_EndDisabled(ctx) end
+      r.ImGui_Spacing(ctx)
+      if not can_resample then r.ImGui_BeginDisabled(ctx) end
+      r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x4488AAFF)
+      if r.ImGui_Button(ctx, "RENDER", -1, 36) then do_render() end
+      r.ImGui_PopStyleColor(ctx)
+      if not can_resample then r.ImGui_EndDisabled(ctx) end
+
+      r.ImGui_EndTable(ctx)
+    end
+
+    r.ImGui_Spacing(ctx)
+    r.ImGui_Separator(ctx)
+    r.ImGui_Spacing(ctx)
+
+    -- ════════════════════════════════════════════════════════════════
+    -- BOTTOM ROW: 2 columns — (XY Pad) (Visualizer)
+    -- ════════════════════════════════════════════════════════════════
+    if r.ImGui_BeginTable(ctx, "BottomRow", 2, table_flags) then
+      r.ImGui_TableSetupColumn(ctx, "XYPad",      r.ImGui_TableColumnFlags_WidthStretch(), 1.0)
+      r.ImGui_TableSetupColumn(ctx, "Visualizer", r.ImGui_TableColumnFlags_WidthStretch(), 2.6)
+      r.ImGui_TableNextRow(ctx)
+
+      -- ── COLUMN 1: XY PAD ──
+      r.ImGui_TableNextColumn(ctx)
       local new_density, new_size, _ = xy_pad("Grain",
         state.grain_density, 0, 100,
         state.grain_size, 10, 500,
@@ -1438,8 +1504,14 @@ function loop()
       state.grain_density = new_density
       state.grain_size = new_size
 
-      -- COLUMN 2: VISUALIZER + VOLUME ENVELOPE
+      -- ── COLUMN 2: VISUALIZER ──
       r.ImGui_TableNextColumn(ctx)
+      section_header("WOOSH")
+
+      -- Inset slider on top of the visualizer
+      state.inset = labeled_slider("Inset", state.inset, 0, 0.45, "%.2f", 0.0,
+        "Shrinks the grain window inside the time selection.\nLonger source sampling, quicker-sounding whoosh.")
+      r.ImGui_Spacing(ctx)
 
       -- Pitch vertical slider on the left of the visualizer
       r.ImGui_SetNextItemWidth(ctx, 20)
@@ -1480,8 +1552,8 @@ function loop()
         return 20.0 * (24000.0 / 20.0) ^ n
       end
 
-      local top_knob_y = hz_to_y(state.filter_peak_freq)    -- peak (higher freq = higher up)
-      local bot_knob_y = hz_to_y(state.filter_base_freq)    -- base (lower freq = lower down)
+      local top_knob_y = hz_to_y(state.filter_peak_freq)
+      local bot_knob_y = hz_to_y(state.filter_base_freq)
 
       -- Fill between knobs (active filter range)
       r.ImGui_DrawList_AddRectFilled(fs_dl, fs_cx + 7, top_knob_y, fs_cx + 13, bot_knob_y, 0x4400FF88, 2)
@@ -1510,14 +1582,12 @@ function loop()
       if filter_top_dragging then
         local new_y = math.max(fs_cy, math.min(bot_knob_y - 4, fs_my))
         local new_hz = y_to_hz(new_y)
-        -- Clamp: peak must stay above base + gap, and within 1000..20000
         new_hz = math.max(state.filter_base_freq + min_hz_gap, math.min(20000.0, new_hz))
         state.filter_peak_freq = new_hz
       end
       if filter_bottom_dragging then
         local new_y = math.min(fs_cy + fslider_h, math.max(top_knob_y + 4, fs_my))
         local new_hz = y_to_hz(new_y)
-        -- Clamp: base must stay below peak - gap, and within 20..2000
         new_hz = math.min(state.filter_peak_freq - min_hz_gap, math.max(20.0, new_hz))
         state.filter_base_freq = new_hz
       end
@@ -1538,130 +1608,98 @@ function loop()
           state.filter_base_freq >= state.filter_peak_freq - 100.5
         local tip = string.format("Peak: %.0f Hz\nBase: %.0f Hz", state.filter_peak_freq, state.filter_base_freq)
         if filter_off_now then
-          tip = tip .. "\n(both knobs at max — EQ doppler bypassed)"
+          tip = tip .. "\n(both knobs at max -- EQ doppler bypassed)"
         end
         show_tooltip(tip)
       end
 
-      -- Pan slider below the visualizer
-      -- Center = 0 (off), left = L→R sweep, right = R→L sweep, edges = 100% strength
-      r.ImGui_Spacing(ctx)
-      r.ImGui_Text(ctx, "Pan")
-      r.ImGui_SetNextItemWidth(ctx, -1)
-      local _, new_pan = r.ImGui_SliderDouble(ctx, '##pan', state.pan_value, -1.0, 1.0, "%.2f")
-      if r.ImGui_IsItemHovered(ctx) and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
+      -- ── CUSTOM PAN KNOB ──
+      -- oOo at center (deadzone snap), >>> on left, <<< on right
+      r.ImGui_Dummy(ctx, 0, 2)
+      local pan_w = r.ImGui_GetContentRegionAvail(ctx)
+      local pan_h = 22
+      r.ImGui_InvisibleButton(ctx, '##pan', pan_w, pan_h)
+      local pan_minx, pan_miny = r.ImGui_GetItemRectMin(ctx)
+      local pan_dl = r.ImGui_GetWindowDrawList(ctx)
+      local pan_mx, pan_my = r.ImGui_GetMousePos(ctx)
+      local pan_active = r.ImGui_IsItemActive(ctx)
+      local pan_hovered = r.ImGui_IsItemHovered(ctx)
+
+      -- Track background
+      r.ImGui_DrawList_AddRectFilled(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF1E1E2E, 4)
+      r.ImGui_DrawList_AddRect(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF2A2A3A, 4)
+
+      -- Label
+      r.ImGui_DrawList_AddText(pan_dl, pan_minx + 6, pan_miny + 3, theme.TextDisabled, "Pan")
+
+      local pan_cx = pan_minx + pan_w * 0.5
+      local pan_cy = pan_miny + pan_h * 0.5
+      -- Center tick marks the neutral position
+      r.ImGui_DrawList_AddLine(pan_dl, pan_cx, pan_miny + 3, pan_cx, pan_miny + pan_h - 3, 0x662A2A3A, 1)
+
+      -- Dead zone around center: values within this band snap to 0
+      local pan_dead = 0.06
+
+      -- Drag to set value; value spans -1..+1 across the track width
+      if pan_active and r.ImGui_IsMouseDown(ctx, 0) then
+        local t = math.max(0.0, math.min(1.0, (pan_mx - pan_minx) / pan_w))
+        local raw = t * 2.0 - 1.0
+        if math.abs(raw) < pan_dead then
+          state.pan_value = 0.0
+        else
+          state.pan_value = raw
+        end
+      end
+      if pan_hovered and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
         state.pan_value = 0.0
       end
-      if r.ImGui_IsItemHovered(ctx) then
-        show_tooltip("Center = no pan sweep.\nLeft = L→R sweep.\nRight = R→L sweep.\nEdges = 100% strength.\nDouble-click to reset.")
+
+      -- Knob position from current value
+      local knob_x = pan_minx + (state.pan_value + 1.0) * 0.5 * pan_w
+
+      -- In the dead zone the knob becomes oOo: a head (large circle) with two ears (small circles)
+      if math.abs(state.pan_value) < pan_dead then
+        local ear_r = 2.2
+        local head_r = 4.6
+        local ear_dx = head_r + ear_r - 0.5
+        r.ImGui_DrawList_AddCircleFilled(pan_dl, knob_x - ear_dx, pan_cy, ear_r, theme.SliderGrab)
+        r.ImGui_DrawList_AddCircleFilled(pan_dl, knob_x,          pan_cy, head_r, theme.SliderGrab)
+        r.ImGui_DrawList_AddCircleFilled(pan_dl, knob_x + ear_dx, pan_cy, ear_r, theme.SliderGrab)
+      else
+        -- Three triangles: >>> when on left half, <<< when on right half
+        local s = 5.5
+        local dx = s * 1.7
+        local pointing_right = state.pan_value <= 0.0
+        for i = -1, 1 do
+          local tcx = knob_x + i * dx
+          if pointing_right then
+            r.ImGui_DrawList_AddTriangleFilled(pan_dl, tcx + s, pan_cy, tcx - s, pan_cy - s, tcx - s, pan_cy + s, theme.SliderGrab)
+          else
+            r.ImGui_DrawList_AddTriangleFilled(pan_dl, tcx - s, pan_cy, tcx + s, pan_cy - s, tcx + s, pan_cy + s, theme.SliderGrab)
+          end
+        end
       end
-      state.pan_value = new_pan
+
+      if pan_hovered or pan_active then
+        show_tooltip("Center = no pan sweep.\nLeft = L->R sweep.\nRight = R->L sweep.\nEdges = 100% strength.\nDouble-click to reset.")
+      end
 
       r.ImGui_Spacing(ctx)
-      section_header("WOOSH")
-      
+
       if r.ImGui_BeginTable(ctx, "VolEnvLayout", 2, r.ImGui_TableFlags_SizingStretchSame()) then
-        r.ImGui_TableNextRow(ctx)
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-        r.ImGui_TableNextColumn(ctx)
-        r.ImGui_Dummy(ctx, 1, 1)
-
+        for _ = 1, 4 do
+          r.ImGui_TableNextRow(ctx)
+          r.ImGui_TableNextColumn(ctx)
+          r.ImGui_Dummy(ctx, 1, 1)
+          r.ImGui_TableNextColumn(ctx)
+          r.ImGui_Dummy(ctx, 1, 1)
+        end
         r.ImGui_EndTable(ctx)
       end
 
-      -- COLUMN 3: OUTPUT / GENERATION
-      r.ImGui_TableNextColumn(ctx)
-      section_header("OUTPUT / GENERATION")
-      
-      state.inset = labeled_slider("Inset", state.inset, 0, 0.45, "%.2f", 0.0,
-        "Shrinks the grain window inside the time selection.\nLonger source sampling, quicker-sounding whoosh.")
-      r.ImGui_Spacing(ctx)
-      
-      r.ImGui_Text(ctx, "Track Name")
-      r.ImGui_SetNextItemWidth(ctx, -1)
-      local _, new_name = r.ImGui_InputText(ctx, '##tempname', state.temp_track_name)
-      state.temp_track_name = new_name
-      r.ImGui_Spacing(ctx)
-      
-      r.ImGui_Text(ctx, "Status:")
-      local msg = state.status_msg or ""
-      local status_col = 0x888899FF
-      if msg:find("Error") then
-        status_col = 0xCC4444FF
-      elseif msg:find("Done") or msg:find("Rendered") or msg:find("Resampled") then
-        status_col = 0x44CC88FF
-      end
-      r.ImGui_TextColored(ctx, status_col, msg)
-      r.ImGui_Spacing(ctx)
-      
-      local can_generate = state.is_folder and state.child_count > 0 and state.sel_duration > 0 and not state.is_generating
-      
-      if not can_generate then r.ImGui_BeginDisabled(ctx) end
-      
-      if r.ImGui_Button(ctx, "GENERATE STEREO", -1, 28) then
-        do_generate(false)
-      end
-      r.ImGui_Spacing(ctx)
-      
-      if r.ImGui_Button(ctx, "GENERATE MONO", -1, 28) then
-        do_generate(true)
-      end
-      
-      if not can_generate then r.ImGui_EndDisabled(ctx) end
-      
-      r.ImGui_Spacing(ctx)
-      r.ImGui_Separator(ctx)
-      r.ImGui_Spacing(ctx)
-      
-      local can_resample = state.has_generated_item
-      if not can_resample then r.ImGui_BeginDisabled(ctx) end
-      
-      if r.ImGui_Button(ctx, "RESAMPLE TO FOLDER", -1, 28) then
-        do_resample()
-      end
-      
-      if not can_resample then r.ImGui_EndDisabled(ctx) end
-      
-      r.ImGui_Spacing(ctx)
-      
-      if not can_resample then r.ImGui_BeginDisabled(ctx) end
-      
-      r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x4488AAFF)
-      if r.ImGui_Button(ctx, "RENDER", -1, 36) then
-        do_render()
-      end
-      r.ImGui_PopStyleColor(ctx)
-      
-      if not can_resample then r.ImGui_EndDisabled(ctx) end
-      
       r.ImGui_EndTable(ctx)
     end
-    
+
     -- Cache window size for next frame
     win_w, win_h = r.ImGui_GetWindowSize(ctx)
 
