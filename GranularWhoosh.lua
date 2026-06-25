@@ -120,6 +120,15 @@ local PLAYBACK_MODES = {"Forward", "Reverse", "Ping-Pong", "Random"}
 local SAMPLING_MODES = {"Uniform", "Sequential"}
 -- (direction constants removed — pan and pitch are now single signed sliders)
 
+-- Seed Lua's PRNG with high-resolution entropy (wallclock + REAPER's
+-- precise timer). Default Lua starts with a fixed seed, so without this
+-- every script run / preview / render would produce identical grains.
+-- Call this before any math.random() usage that should differ each time.
+local function seed_random()
+  math.randomseed(os.time() + math.floor((r.time_precise() % 1) * 1000000))
+  math.random()  -- discard first value (poorly distributed in many Lua builds)
+end
+
 local grain_vis_data = {}
 
 local function regen_grain_vis_data()
@@ -133,6 +142,7 @@ local function regen_grain_vis_data()
   end
 end
 
+seed_random()           -- fresh visualization dots each script run
 regen_grain_vis_data()
 
 -- Track pos_rnd changes to trigger visualizer redraws
@@ -367,15 +377,18 @@ function draw_preview(width_offset)
     end
   end
 
-  -- Pitch curve function: same shape as volume but centered at 0.5
+  -- Pitch curve function: ends anchored at the middle line (0.5),
+  -- only the peak deviates up/down by pitch_shift. This mirrors the
+  -- actual ReaPitch envelope written by write_doppler_env (floor/peak/floor).
   -- pitch_shift > 0 = pitch rises to peak then falls (approach)
   -- pitch_shift < 0 = pitch dips to peak then rises (recede)
   local pitch_fn
   if state.pitch_shift ~= 0 then
     local pshift = state.pitch_shift / 12.0  -- normalize to -1..1
     pitch_fn = function(t)
-      local v = vol_fn(t)  -- 0..1 shape
-      return 0.5 + (v - 0.5) * pshift  -- scale around center
+      local v = vol_fn(t)                 -- 0.2..1.0 volume shape
+      local shape = (v - 0.2) / 0.8       -- 0 at baseline (ends), 1 at peak
+      return 0.5 + shape * 0.5 * pshift   -- anchored at 0.5, peak deviates
     end
   end
 
@@ -443,13 +456,27 @@ function draw_preview(width_offset)
   end
 
   -- ── FILTER HORIZONTAL LINES (base = green, peak = bright green) ──
+  -- Auto-disable: when both knobs sit at their maxima (peak at 20000 Hz
+  -- and base pushed up against peak) there is no audible sweep, so the
+  -- EQ doppler is bypassed in preview and render.
+  local filter_doppler_off =
+    state.filter_peak_freq >= 20000.0 and
+    state.filter_base_freq >= state.filter_peak_freq - 100.5
   local function hz_to_norm(hz)
     return math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
   end
   local filter_base_y = cy + H - hz_to_norm(state.filter_base_freq) * (H - 8) - 4
   local filter_peak_y = cy + H - hz_to_norm(state.filter_peak_freq) * (H - 8) - 4
-  r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x6600FF88, 1.0)
-  r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0xCC00FF88, 1.5)
+  if filter_doppler_off then
+    -- Dimmed single line + OFF label: EQ doppler is bypassed
+    r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0x33555566, 1.0)
+    local off_txt = "FILTER OFF"
+    local off_w = r.ImGui_CalcTextSize(ctx, off_txt)
+    r.ImGui_DrawList_AddText(dl, cx + (W - off_w) * 0.5, filter_peak_y - 16, 0xFF556677, off_txt)
+  else
+    r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x6600FF88, 1.0)
+    r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0xCC00FF88, 1.5)
+  end
 
   -- (Spill lines are drawn after the peak dot — they need its position)
 
@@ -743,10 +770,12 @@ end
 
 function do_generate(is_mono)
   if not validate_can_generate() then return end
-  
+
+  seed_random()  -- fresh grain layout every preview
+
   state.is_generating = true
   state.status_msg = "Generating..."
-  
+
   r.Undo_BeginBlock()
   r.PreventUIRefresh(1)
   
@@ -1220,26 +1249,37 @@ function apply_doppler_envelopes()
   end
 
   -- Filter envelope (ReaEQ lowpass)
+  -- Auto-disable: when both filter knobs sit at their maxima (peak at
+  -- 20000 and base pushed up against peak) there is no audible sweep,
+  -- so the EQ doppler is bypassed: ReaEQ is disabled and no envelope is
+  -- written. The condition mirrors the preview's filter_doppler_off.
+  local filter_doppler_off =
+    state.filter_peak_freq >= 20000.0 and
+    state.filter_base_freq >= state.filter_peak_freq - 100.5
   local filter_idx = get_or_add_fx(temp_track, 'ReaEQ', 'VST: ReaEQ (Cockos)', 'VST3: ReaEQ (Cockos)')
   if filter_idx >= 0 then
-    r.TrackFX_SetEnabled(temp_track, filter_idx, true)
-    r.TrackFX_SetParam(temp_track, filter_idx, 12, 0.0)
-    r.TrackFX_SetParam(temp_track, filter_idx, 11, 1.0)
-    r.TrackFX_SetParam(temp_track, filter_idx, 15, 0.7)
-    
-    local filter_env = r.GetFXEnvelope(temp_track, filter_idx, 14, true)
-    if filter_env then
-      local function hz_to_norm(hz)
-        return math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
+    if filter_doppler_off then
+      r.TrackFX_SetEnabled(temp_track, filter_idx, false)
+    else
+      r.TrackFX_SetEnabled(temp_track, filter_idx, true)
+      r.TrackFX_SetParam(temp_track, filter_idx, 12, 0.0)
+      r.TrackFX_SetParam(temp_track, filter_idx, 11, 1.0)
+      r.TrackFX_SetParam(temp_track, filter_idx, 15, 0.7)
+
+      local filter_env = r.GetFXEnvelope(temp_track, filter_idx, 14, true)
+      if filter_env then
+        local function hz_to_norm(hz)
+          return math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
+        end
+
+        local norm_base = hz_to_norm(state.filter_base_freq)
+        local norm_peak = hz_to_norm(state.filter_peak_freq)
+
+        local f_start = anchor_start
+        local f_end = anchor_end
+
+        write_doppler_env(filter_env, norm_base, norm_peak, norm_base, env_start, f_start, f_end, env_end, att, rel)
       end
-      
-      local norm_base = hz_to_norm(state.filter_base_freq)
-      local norm_peak = hz_to_norm(state.filter_peak_freq)
-      
-      local f_start = anchor_start
-      local f_end = anchor_end
-      
-      write_doppler_env(filter_env, norm_base, norm_peak, norm_base, env_start, f_start, f_end, env_end, att, rel)
     end
   end
 
@@ -1493,7 +1533,14 @@ function loop()
       r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, bot_knob_y, 4, 0xFF44AA88)
 
       if fs_hovered or filter_top_dragging or filter_bottom_dragging then
-        show_tooltip(string.format("Peak: %.0f Hz\nBase: %.0f Hz", state.filter_peak_freq, state.filter_base_freq))
+        local filter_off_now =
+          state.filter_peak_freq >= 20000.0 and
+          state.filter_base_freq >= state.filter_peak_freq - 100.5
+        local tip = string.format("Peak: %.0f Hz\nBase: %.0f Hz", state.filter_peak_freq, state.filter_base_freq)
+        if filter_off_now then
+          tip = tip .. "\n(both knobs at max — EQ doppler bypassed)"
+        end
+        show_tooltip(tip)
       end
 
       -- Pan slider below the visualizer
