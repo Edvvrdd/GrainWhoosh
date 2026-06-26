@@ -196,7 +196,7 @@ local state = {
 function xy_pad(label, val_x, min_x, max_x, val_y, min_y, max_y, fmt_x, fmt_y, tooltip, label_x, label_y)
   local avail = r.ImGui_GetContentRegionAvail(ctx)
   local label_margin = 18  -- space for axis labels
-  local pad = math.min(avail - label_margin - 4, 190)
+  local pad = math.min(avail - label_margin - 4, 235)
   if pad < 80 then pad = 80 end
   local H = pad
   local dl = r.ImGui_GetWindowDrawList(ctx)
@@ -758,8 +758,9 @@ function get_unique_temp_name()
   return unique_name
 end
 
-function do_generate(is_mono)
+function do_generate(is_mono, apply_env)
   if not validate_can_generate() then return end
+  if apply_env == nil then apply_env = true end
 
   seed_random()  -- fresh grain layout every preview
 
@@ -1022,10 +1023,12 @@ function do_generate(is_mono)
   state.generated_start = win_start
   state.generated_end = win_end
   state.status_msg = string.format("Done — %d grains on '%s'", count, unique_name)
-  
+
   r.UpdateArrange()
-  
-  r.defer(apply_volume_envelope)
+
+  if apply_env then
+    r.defer(apply_volume_envelope)
+  end
 end
 
 function do_resample()
@@ -1080,13 +1083,15 @@ function do_resample()
   state.status_msg = "Resampled to 'Resample_" .. resample_num .. "'"
 end
 
-function do_render()
+function do_render(is_mono)
   if not state.has_generated_item then return end
+  if is_mono == nil then is_mono = state.is_mono end
+  state.is_mono = is_mono
 
   -- Find temp track
   local temp_track, temp_idx = find_temp_track()
   if not temp_track then
-    state.status_msg = "Temp track not found — run Generate first"
+    state.status_msg = "Temp track not found — run Preview first"
     return
   end
 
@@ -1140,6 +1145,41 @@ function do_render()
   r.PreventUIRefresh(-1)
   r.UpdateArrange()
   r.Undo_EndBlock("GranularWhoosh: Render " .. state.temp_track_name, -1)
+end
+
+function do_envelope_only()
+  if not validate_can_generate() then return end
+
+  r.Undo_BeginBlock()
+  r.PreventUIRefresh(1)
+
+  -- Find or create an empty temp track (no media items are created)
+  local temp_track, _ = find_temp_track()
+  if not temp_track then
+    local unique_name = get_unique_temp_name()
+    state.temp_track_name = unique_name
+    r.InsertTrackAtIndex(0, true)
+    temp_track = r.GetTrack(0, 0)
+    r.GetSetMediaTrackInfo_String(temp_track, 'P_NAME', unique_name, true)
+  end
+  r.SetMediaTrackInfo_Value(temp_track, 'I_NCHAN', 2)
+
+  -- Envelope bounds follow the time selection (same inset logic as Generate)
+  local inset = math.max(0.0, math.min(0.45, state.inset))
+  local inset_s = state.sel_duration * inset
+  state.generated_start = state.sel_start + inset_s
+  state.generated_end = state.sel_end - inset_s
+  state.has_generated_item = true
+  state.is_mono = false
+
+  apply_volume_envelope()
+
+  r.TrackList_AdjustWindows(false)
+  r.UpdateArrange()
+  r.PreventUIRefresh(-1)
+  r.Undo_EndBlock("GranularWhoosh: Envelope Only", -1)
+
+  state.status_msg = string.format("Envelopes written on '%s' (no items)", state.temp_track_name)
 end
 
 function get_or_add_fx(track, search, ...)
@@ -1322,7 +1362,7 @@ local win_w, win_h = 640, 620  -- cached window size from previous frame
 
 -- Fixed panel widths used in docked (single horizontal row) mode.
 -- Each section keeps its natural size; the window scrolls horizontally.
-local DOCK_PANEL_W = { 210, 235, 205, 245, 430 }
+local DOCK_PANEL_W = { 215, 225, 225, 290, 430 }
 
 ---------------------------------------------------------------------
 -- Panel-body functions (shared by floating and docked layouts)
@@ -1357,8 +1397,7 @@ local function panel_identity()
 end
 
 local function panel_sampling()
-  section_header("GRAINS")
-  r.ImGui_Text(ctx, "Sampling Mode")
+  section_header("Sampling Mode")
   local half_w = (r.ImGui_GetContentRegionAvail(ctx) - 4) * 0.5
   if state.sampling_mode == 0 then
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x1A6666FF)
@@ -1369,7 +1408,7 @@ local function panel_sampling()
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x444466FF)
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x555577FF)
   end
-  if r.ImGui_Button(ctx, "Uniform", half_w, 0) then state.sampling_mode = 0 end
+  if r.ImGui_Button(ctx, "Uniform", half_w, 28) then state.sampling_mode = 0 end
   r.ImGui_PopStyleColor(ctx, 3)
   r.ImGui_SameLine(ctx, 0, 4)
   if state.sampling_mode == 1 then
@@ -1381,11 +1420,12 @@ local function panel_sampling()
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x444466FF)
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x555577FF)
   end
-  if r.ImGui_Button(ctx, "Sequential", half_w, 0) then state.sampling_mode = 1 end
+  if r.ImGui_Button(ctx, "Sequential", half_w, 28) then state.sampling_mode = 1 end
   r.ImGui_PopStyleColor(ctx, 3)
   show_tooltip("Uniform: grains cycle through all sources with random offsets.\nSequential: each source plays once in order, auto-sized to fit.")
 
-  r.ImGui_Text(ctx, "Sampling Direction")
+  r.ImGui_Spacing(ctx)
+  section_header("Sampling Direction")
   local dir_half_w = (r.ImGui_GetContentRegionAvail(ctx) - 4) * 0.5
   for row = 0, 1 do
     for col = 0, 1 do
@@ -1400,7 +1440,7 @@ local function panel_sampling()
         r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x444466FF)
         r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x555577FF)
       end
-      if r.ImGui_Button(ctx, PLAYBACK_MODES[idx], dir_half_w, 0) then
+      if r.ImGui_Button(ctx, PLAYBACK_MODES[idx], dir_half_w, 28) then
         state.playback_mode = idx
       end
       r.ImGui_PopStyleColor(ctx, 3)
@@ -1410,29 +1450,42 @@ local function panel_sampling()
 end
 
 local function panel_output()
-  section_header("OUTPUT / GENERATION")
-  local can_generate = state.is_folder and state.child_count > 0 and state.sel_duration > 0 and not state.is_generating
+  local can_preview = state.is_folder and state.child_count > 0 and state.sel_duration > 0 and not state.is_generating
+  local can_generate = state.has_generated_item and not state.is_generating
+  local can_util = state.has_generated_item
+  local half_w = (r.ImGui_GetContentRegionAvail(ctx) - 4) * 0.5
+
+  -- Title 1: Utilities + 2 buttons (mirrors Sampling Mode row)
+  section_header("Utilities")
+  if not can_util then r.ImGui_BeginDisabled(ctx) end
+  if r.ImGui_Button(ctx, "Resample to Folder", half_w, 28) then do_resample() end
+  r.ImGui_SameLine(ctx, 0, 4)
+  if r.ImGui_Button(ctx, "Envelope Only", half_w, 28) then do_envelope_only() end
+  if not can_util then r.ImGui_EndDisabled(ctx) end
+  r.ImGui_Spacing(ctx)
+
+  -- Title 2: Generation + 4 buttons in 2x2 (mirrors Sampling Direction grid)
+  section_header("Generation")
+  -- Row 1: Preview (sample grains + write envelopes to temp track)
+  if not can_preview then r.ImGui_BeginDisabled(ctx) end
+  if r.ImGui_Button(ctx, "Preview Stereo", half_w, 28) then do_generate(false, true) end
+  r.ImGui_SameLine(ctx, 0, 4)
+  if r.ImGui_Button(ctx, "Preview Mono", half_w, 28) then do_generate(true, true) end
+  if not can_preview then r.ImGui_EndDisabled(ctx) end
+  -- Row 2: Generate (bounce temp track + envelopes to a new rendered track)
   if not can_generate then r.ImGui_BeginDisabled(ctx) end
-  if r.ImGui_Button(ctx, "GENERATE STEREO", -1, 28) then do_generate(false) end
-  r.ImGui_Spacing(ctx)
-  if r.ImGui_Button(ctx, "GENERATE MONO", -1, 28) then do_generate(true) end
-  if not can_generate then r.ImGui_EndDisabled(ctx) end
-  r.ImGui_Spacing(ctx)
-  r.ImGui_Separator(ctx)
-  r.ImGui_Spacing(ctx)
-  local can_resample = state.has_generated_item
-  if not can_resample then r.ImGui_BeginDisabled(ctx) end
-  if r.ImGui_Button(ctx, "RESAMPLE TO FOLDER", -1, 28) then do_resample() end
-  if not can_resample then r.ImGui_EndDisabled(ctx) end
-  r.ImGui_Spacing(ctx)
-  if not can_resample then r.ImGui_BeginDisabled(ctx) end
   r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x4488AAFF)
-  if r.ImGui_Button(ctx, "RENDER", -1, 36) then do_render() end
-  r.ImGui_PopStyleColor(ctx)
-  if not can_resample then r.ImGui_EndDisabled(ctx) end
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x5599BBFF)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x66AACCFF)
+  if r.ImGui_Button(ctx, "Generate Stereo", half_w, 28) then do_render(false) end
+  r.ImGui_SameLine(ctx, 0, 4)
+  if r.ImGui_Button(ctx, "Generate Mono", half_w, 28) then do_render(true) end
+  r.ImGui_PopStyleColor(ctx, 3)
+  if not can_generate then r.ImGui_EndDisabled(ctx) end
 end
 
 local function panel_xypad()
+  section_header("Grains")
   local new_density, new_size, _ = xy_pad("Grain",
     state.grain_density, 0, 100,
     state.grain_size, 10, 500,
@@ -1444,7 +1497,7 @@ local function panel_xypad()
 end
 
 local function panel_visualizer()
-  section_header("WOOSH")
+  section_header("Woosh")
 
   -- Inset slider on top of the visualizer
   state.inset = labeled_slider("Inset", state.inset, 0, 0.45, "%.2f", 0.0,
@@ -1693,8 +1746,8 @@ function loop()
       local table_flags = r.ImGui_TableFlags_SizingStretchProp()
 
       if r.ImGui_BeginTable(ctx, "TopRow", 3, table_flags) then
-        r.ImGui_TableSetupColumn(ctx, "Identity", r.ImGui_TableColumnFlags_WidthStretch(), 1.3)
-        r.ImGui_TableSetupColumn(ctx, "Sampling", r.ImGui_TableColumnFlags_WidthStretch(), 1.1)
+        r.ImGui_TableSetupColumn(ctx, "Identity", r.ImGui_TableColumnFlags_WidthStretch(), 1.2)
+        r.ImGui_TableSetupColumn(ctx, "Sampling", r.ImGui_TableColumnFlags_WidthStretch(), 1.0)
         r.ImGui_TableSetupColumn(ctx, "Output",  r.ImGui_TableColumnFlags_WidthStretch(), 1.0)
         r.ImGui_TableNextRow(ctx)
 
