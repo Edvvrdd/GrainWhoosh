@@ -133,7 +133,7 @@ local grain_vis_data = {}
 
 local function regen_grain_vis_data()
   grain_vis_data = {}
-  for i = 1, 300 do
+  for i = 1, 200 do
     table.insert(grain_vis_data, {
       x_frac = math.random(),
       h_frac = 0.2 + math.random() * 0.8,
@@ -189,6 +189,11 @@ local state = {
   is_generating = false,
   has_generated_item = false
 }
+
+-- Caches
+local _track_cache = { track = nil, time = 0 }
+local _fx_cache = {}
+local DRAW_SEGMENTS = 24
 
 ---------------------------------------------------------------------
 -- UI Helper Functions
@@ -386,9 +391,9 @@ function draw_preview(width_offset)
   -- Dots whose vertical spread follows the volume envelope.
   -- At env=0 (edges) dots cluster at the horizontal middle.
   -- At env=1 (peak) dots expand to fill top and bottom.
-  -- Dots that would spill outside the canvas (due to elongation) are culled.
+  r.ImGui_DrawList_PushClipRect(dl, cx, cy, cx + W, cy + H, true)
   local density_norm = state.grain_density / 100
-  local num_grains = math.floor(50 + (250 * density_norm))
+  local num_grains = math.floor(30 + (170 * density_norm))
   local grain_rgb = {0x334455, 0x553344, 0x335544}
   local rx = 7.5 + ((state.grain_size - 10) / 490) * 67.5
   local ry = 7.5
@@ -428,6 +433,7 @@ function draw_preview(width_offset)
         end
       end
     end
+  r.ImGui_DrawList_PopClipRect(dl)
 
   -- ── PITCH CURVE (white line, only when pitch_shift ≠ 0) ──
   if pitch_fn then
@@ -700,6 +706,59 @@ function refresh_source_info()
 end
 
 ---------------------------------------------------------------------
+-- Settings Persistence
+---------------------------------------------------------------------
+local SETTINGS_SECTION = "GranularWhoosh"
+
+function save_settings()
+  local data = {
+    sampling_mode = state.sampling_mode,
+    grain_size = state.grain_size,
+    grain_density = state.grain_density,
+    randomness = state.randomness,
+    playback_mode = state.playback_mode,
+    inset = state.inset,
+    peak_pos = state.peak_pos,
+    hold_time = state.hold_time,
+    attack = state.attack,
+    release = state.release,
+    front_spill = state.front_spill,
+    back_spill = state.back_spill,
+    pitch_shift = state.pitch_shift,
+    filter_base_freq = state.filter_base_freq,
+    filter_peak_freq = state.filter_peak_freq,
+    pan_amount = state.pan_amount,
+    pan_value = state.pan_value,
+    enable_doppler = state.enable_doppler,
+    temp_track_name = state.temp_track_name,
+    is_mono = state.is_mono,
+  }
+  local str = ""
+  for k, v in pairs(data) do
+    local val = tostring(v)
+    if type(v) == "boolean" then val = v and "1" or "0" end
+    str = str .. k .. "=" .. val .. "|"
+  end
+  r.SetExtState(SETTINGS_SECTION, "state", str, true)
+end
+
+function load_settings()
+  local str = r.GetExtState(SETTINGS_SECTION, "state")
+  if str == "" then return end
+  for k, v in string.gmatch(str, "([^=]+)=([^|]+)|") do
+    if state[k] ~= nil then
+      if type(state[k]) == "boolean" then
+        state[k] = (v == "1")
+      elseif type(state[k]) == "number" then
+        state[k] = tonumber(v) or state[k]
+      else
+        state[k] = v
+      end
+    end
+  end
+end
+
+---------------------------------------------------------------------
 -- Generation Functions
 ---------------------------------------------------------------------
 function validate_can_generate()
@@ -722,10 +781,20 @@ function validate_can_generate()
 end
 
 function find_temp_track()
+  local now = r.time_precise()
+  if _track_cache.track and now - _track_cache.time < 0.5 then
+    local cached = _track_cache.track
+    local _, cached_name = r.GetSetMediaTrackInfo_String(cached, 'P_NAME', '', false)
+    if cached_name == state.temp_track_name then
+      local idx = r.GetMediaTrackInfo_Value(cached, 'IP_TRACKNUMBER') - 1
+      return cached, idx
+    end
+  end
   for i = 0, r.CountTracks(0) - 1 do
     local track = r.GetTrack(0, i)
     local _, name = r.GetSetMediaTrackInfo_String(track, 'P_NAME', '', false)
     if name == state.temp_track_name then
+      _track_cache = { track = track, time = now }
       return track, i
     end
   end
@@ -1183,17 +1252,27 @@ function do_envelope_only()
 end
 
 function get_or_add_fx(track, search, ...)
+  local track_ptr = tostring(track)
+  if _fx_cache[track_ptr] and _fx_cache[track_ptr].search == search then
+    local cached = _fx_cache[track_ptr]
+    local _, nm = r.TrackFX_GetFXName(track, cached.idx)
+    if nm:find(search, 1, true) then return cached.idx end
+  end
   local cnt = r.TrackFX_GetCount(track)
   for i = 0, cnt - 1 do
     local _, nm = r.TrackFX_GetFXName(track, i)
     if nm:find(search, 1, true) then
+      _fx_cache[track_ptr] = { idx = i, search = search }
       return i
     end
   end
   local add_names = {...}
   for _, name in ipairs(add_names) do
     local idx = r.TrackFX_AddByName(track, name, false, -1)
-    if idx >= 0 then return idx end
+    if idx >= 0 then
+      _fx_cache[track_ptr] = { idx = idx, search = search }
+      return idx
+    end
   end
   return -1
 end
@@ -1223,10 +1302,7 @@ end
 
 local function write_doppler_env(env, v_floor, v_peak, v_floor_end, env_start, peak_start, peak_end, env_end, att, rel)
   if not env then return end
-  local n = r.CountEnvelopePoints(env)
-  for i = n - 1, 0, -1 do
-    r.DeleteEnvelopePointEx(env, -1, i)
-  end
+  r.DeleteEnvelopePointRange(env, env_start - 0.001, env_end + 0.001)
   
   if math.abs(peak_start - peak_end) > 0.001 then
     r.InsertEnvelopePoint(env, env_start,  v_floor,    5,  att, false, false)
@@ -1241,15 +1317,17 @@ local function write_doppler_env(env, v_floor, v_peak, v_floor_end, env_start, p
   r.Envelope_SortPoints(env)
 end
 
-function apply_doppler_envelopes()
+function apply_doppler_envelopes(env_start, env_end, anchor_start, anchor_end, att, rel)
   if not state.enable_doppler then return end
   
   local temp_track, _ = find_temp_track()
   if not temp_track then return end
   if not state.has_generated_item then return end
 
-  local env_start, env_end, anchor_start, anchor_end, att, rel = calc_env_bounds(state.generated_start, state.generated_end)
-  if not env_start then return end
+  if not env_start then
+    env_start, env_end, anchor_start, anchor_end, att, rel = calc_env_bounds(state.generated_start, state.generated_end)
+    if not env_start then return end
+  end
 
   -- Pitch envelope
   local pitch_idx = get_or_add_fx(temp_track, 'ReaPitch', 'VST: ReaPitch (Cockos)', 'VST3: ReaPitch (Cockos)')
@@ -1330,6 +1408,7 @@ function apply_volume_envelope()
   if not temp_track then return end
   if not state.has_generated_item then return end
 
+  r.PreventUIRefresh(1)
   r.SetMediaTrackInfo_Value(temp_track, 'I_AUTOMODE', 1)
 
   local vol_env = r.GetTrackEnvelopeByName(temp_track, 'Volume')
@@ -1338,17 +1417,18 @@ function apply_volume_envelope()
     r.Main_OnCommand(40406, 0)
     vol_env = r.GetTrackEnvelopeByName(temp_track, 'Volume')
   end
-  if not vol_env then return end
+  if not vol_env then r.PreventUIRefresh(-1) return end
 
   local env_start, env_end, peak_start, peak_end, att, rel = calc_env_bounds(state.generated_start, state.generated_end)
-  if not env_start then return end
+  if not env_start then r.PreventUIRefresh(-1) return end
 
   local env_min = r.ScaleToEnvelopeMode(1, 0.0)
   local env_max = r.ScaleToEnvelopeMode(1, 1.0)
 
   write_doppler_env(vol_env, env_min, env_max, env_min, env_start, peak_start, peak_end, env_end, att, rel)
 
-  apply_doppler_envelopes()
+  apply_doppler_envelopes(env_start, env_end, peak_start, peak_end, att, rel)
+  r.PreventUIRefresh(-1)
   r.TrackList_AdjustWindows(false)
   r.UpdateArrange()
 end
@@ -1812,4 +1892,6 @@ function loop()
   r.defer(loop)
 end
 
+r.atexit(save_settings)
+load_settings()
 r.defer(loop)

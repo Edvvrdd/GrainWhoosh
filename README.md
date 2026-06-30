@@ -60,26 +60,20 @@ A live preview shows the exact bezier curve that will be written to the temp tra
 - **Fall Tension** — same for the release side
 - **Front Spill** — extends the envelope start before the time selection (seconds)
 - **Back Spill** — extends the envelope end after the time selection (seconds)
-- **Compression** — adds ReaComp to the temp track; controls threshold and ratio together (0% = bypass, 100% = heavy)
 
 ### Doppler section
 
 Toggles pitch, filter, and pan envelopes that simulate a moving sound source. All three share the same attack/release curvature from the Volume Envelope section but have independent peak positions.
 
 **Pitch**
-- **Intensity** — maximum pitch deviation at the peak (±semitones, 0–24)
-- **Pitch Dir** — up-then-down (approach) or down-then-up (recede feel)
-- **Pitch Offset** — shifts the pitch peak earlier or later relative to the volume peak (seconds)
+- **Intensity** — signed slider (0–±12 semitones). Positive = up-then-down (approach), negative = down-then-up (recede), zero = disabled
 
 **Filter**
 - **Base Freq** — lowpass filter frequency at the edges of the whoosh (20–2000 Hz)
 - **Peak Freq** — lowpass filter frequency at the peak (1000–20000 Hz)
-- **Filter Offset** — shifts the filter peak relative to the volume peak (seconds)
 
 **Pan**
-- **Strength** — maximum pan offset at the edges of the whoosh (0 = center, 1 = full left/right)
-- **Pan Dir** — L→R or R→L sweep
-- **Pan Offset** — shifts the pan peak relative to the volume peak (seconds)
+- **Strength / Direction** — signed slider: center = no sweep, negative = L→R sweep, positive = R→L sweep. Magnitude controls offset strength
 
 ### Output / Generation section
 
