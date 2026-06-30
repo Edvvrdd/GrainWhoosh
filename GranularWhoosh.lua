@@ -153,7 +153,7 @@ local state = {
   grain_density = 60.0,   -- 0-100 percentage (maps to density/crossfade)
   randomness = 0.0,
   playback_mode = 1, -- 1-based index for combo
-  inset = 0.0,         -- 0..0.45 — inset grains by this fraction each side
+  inset = 0.0,         -- 0..0.30 — compresses grain window from each side
 
   -- Source Info (from Reaper)
   sel_start = 0,
@@ -169,8 +169,6 @@ local state = {
   hold_time = 0.0,
   attack = 0.5,
   release = 0.5,
-  front_spill = 0.0,
-  back_spill = 0.0,
   
   -- Doppler
   pitch_shift = 0.0,
@@ -314,8 +312,6 @@ local peak_drag_start_my = 0  -- mouse Y at drag start
 local peak_drag_start_hold = 0  -- hold_time at drag start
 local rise_dragging = false  -- tracks whether the rise tension triangle is being dragged
 local fall_dragging = false  -- tracks whether the fall tension triangle is being dragged
-local spill_left_dragging = false
-local spill_right_dragging = false
 local filter_top_dragging = false    -- filter peak knob (top)
 local filter_bottom_dragging = false -- filter base knob (bottom)
 
@@ -336,12 +332,13 @@ function draw_preview(width_offset)
   r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + W, cy + H, theme.WindowBg, 4)
   r.ImGui_DrawList_AddRect(dl, cx, cy, cx + W, cy + H, theme.Border, 4)
 
-  -- ── INSET SHADING ──
-  local inset = math.max(0.0, math.min(0.45, state.inset))
-  if inset > 0 then
-    local inset_px = W * inset
-    r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + inset_px, cy + H, 0x30000000, 0)
-    r.ImGui_DrawList_AddRectFilled(dl, cx + W - inset_px, cy, cx + W, cy + H, 0x30000000, 0)
+  -- ── DURATION SHADING (inset margins) ──
+  local inset_frac = math.max(0.0, math.min(0.30, state.inset))
+  local active_w = W * (1 - 2 * inset_frac)
+  local margin_w = W * inset_frac
+  if margin_w > 1 then
+    r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + margin_w, cy + H, 0x30000000, 0)
+    r.ImGui_DrawList_AddRectFilled(dl, cx + W - margin_w, cy, cx + W, cy + H, 0x30000000, 0)
   end
 
   -- ── ENVELOPE MATH (computed first so dots can use it) ──
@@ -381,9 +378,8 @@ function draw_preview(width_offset)
   if state.pitch_shift ~= 0 then
     local pshift = state.pitch_shift / 12.0  -- normalize to -1..1
     pitch_fn = function(t)
-      local v = vol_fn(t)                 -- 0.2..1.0 volume shape
-      local shape = (v - 0.2) / 0.8       -- 0 at baseline (ends), 1 at peak
-      return 0.5 + shape * 0.5 * pshift   -- anchored at 0.5, peak deviates
+      local v = vol_fn(t)                 -- 0..1 volume shape
+      return 0.5 + v * 0.5 * pshift      -- 0.5 at edges, 0.5±0.5*pshift at peak
     end
   end
 
@@ -409,7 +405,7 @@ function draw_preview(width_offset)
 
   for i = 1, num_grains do
     local g = grain_vis_data[i]
-    local x = cx + (g.x_frac * W)
+    local x = cx + margin_w + (g.x_frac * active_w)
     -- Cull horizontally if the elongated dot would spill
     if x - rx < cx or x + rx > cx + W then
       -- dot would spill; skip it
@@ -452,26 +448,18 @@ function draw_preview(width_offset)
   end
 
   -- ── FILTER HORIZONTAL LINES (base = green, peak = bright green) ──
-  -- Auto-disable: when both knobs sit at their maxima (peak at 20000 Hz
-  -- and base pushed up against peak) there is no audible sweep, so the
-  -- EQ doppler is bypassed in preview and render.
-  local filter_doppler_off =
-    state.filter_peak_freq >= 20000.0 and
-    state.filter_base_freq >= state.filter_peak_freq - 100.5
+  -- Each line hides independently when its knob is at the extreme of the
+  -- slider travel (mirrors pitch envelope behavior).
   local function hz_to_norm(hz)
     return math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
   end
   local filter_base_y = cy + H - hz_to_norm(state.filter_base_freq) * (H - 8) - 4
   local filter_peak_y = cy + H - hz_to_norm(state.filter_peak_freq) * (H - 8) - 4
-  if filter_doppler_off then
-    -- Dimmed single line + OFF label: EQ doppler is bypassed
-    r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0x33555566, 1.0)
-    local off_txt = "FILTER OFF"
-    local off_w = r.ImGui_CalcTextSize(ctx, off_txt)
-    r.ImGui_DrawList_AddText(dl, cx + (W - off_w) * 0.5, filter_peak_y - 16, 0xFF556677, off_txt)
-  else
-    r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x6600FF88, 1.0)
+  if state.filter_peak_freq < 20000.0 then
     r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0xCC00FF88, 1.5)
+  end
+  if state.filter_base_freq > 20.0 then
+    r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x6600FF88, 1.0)
   end
 
   -- (Spill lines are drawn after the peak dot — they need its position)
@@ -602,50 +590,8 @@ function draw_preview(width_offset)
   r.ImGui_DrawList_AddTriangleFilled(dl, fp1x, fp1y, fp2x, fp2y, fp3x, fp3y, 0xFF00CCCC)  -- body
   r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fall_tri_s - 3, fall_tri_y, fall_tri_x - fall_tri_s + 3, fall_tri_y - fall_tri_s + 4, fall_tri_x - fall_tri_s + 3, fall_tri_y + fall_tri_s - 4, 0xFF66EEEE)  -- highlight
 
-  -- ── SPILL LINES (draggable vertical lines, capped at halfway to peak dot) ──
-  -- Left line = front spill, right line = back spill.
-  -- spill 0.0 → at edge, spill 2.0 → halfway to peak dot.
-  local spill_max = 2.0
-  local left_cap = cx + (peak_dot_x - peak_dot_rx - cx) * 0.5
-  local right_cap = (cx + W) - ((cx + W) - (peak_dot_x + peak_dot_rx)) * 0.5
-  local left_line_x = cx + (state.front_spill / spill_max) * (left_cap - cx)
-  local right_line_x = (cx + W) - (state.back_spill / spill_max) * ((cx + W) - right_cap)
-
-  local spill_hit_w = 6
-  local left_hit = math.abs(mx - left_line_x) < spill_hit_w and my >= cy and my <= cy + H
-  local right_hit = math.abs(mx - right_line_x) < spill_hit_w and my >= cy and my <= cy + H
-
-  if mouse_clicked and left_hit and not peak_dragging and not rise_dragging and not fall_dragging then
-    spill_left_dragging = true
-  end
-  if mouse_clicked and right_hit and not peak_dragging and not rise_dragging and not fall_dragging and not spill_left_dragging then
-    spill_right_dragging = true
-  end
-  if not mouse_down then
-    spill_left_dragging = false
-    spill_right_dragging = false
-  end
-  if spill_left_dragging then
-    local new_x = math.max(cx, math.min(left_cap, mx))
-    state.front_spill = ((new_x - cx) / (left_cap - cx)) * spill_max
-    left_line_x = new_x
-  end
-  if spill_right_dragging then
-    local new_x = math.max(right_cap, math.min(cx + W, mx))
-    state.back_spill = (((cx + W) - new_x) / ((cx + W) - right_cap)) * spill_max
-    right_line_x = new_x
-  end
-
-  -- Draw spill lines (bright, with small handle dots)
-  r.ImGui_DrawList_AddLine(dl, left_line_x, cy, left_line_x, cy + H, 0x88FFFFFF, 2.0)
-  r.ImGui_DrawList_AddCircleFilled(dl, left_line_x, cy + 4, 3, 0xFFFFFFFF)
-  r.ImGui_DrawList_AddCircleFilled(dl, left_line_x, cy + H - 4, 3, 0xFFFFFFFF)
-  r.ImGui_DrawList_AddLine(dl, right_line_x, cy, right_line_x, cy + H, 0x88FFFFFF, 2.0)
-  r.ImGui_DrawList_AddCircleFilled(dl, right_line_x, cy + 4, 3, 0xFFFFFFFF)
-  r.ImGui_DrawList_AddCircleFilled(dl, right_line_x, cy + H - 4, 3, 0xFFFFFFFF)
-
   -- ── HOVER READOUT ──
-  if not peak_dragging and not rise_dragging and not fall_dragging and not spill_left_dragging and not spill_right_dragging and mx >= cx and mx <= cx + W and my >= cy and my <= cy + H then
+  if not peak_dragging and not rise_dragging and not fall_dragging and mx >= cx and mx <= cx + W and my >= cy and my <= cy + H then
     local hover_t = (mx - cx) / W
     hover_t = math.max(0, math.min(1, hover_t))
     local hover_x = cx + hover_t * W
@@ -722,8 +668,6 @@ function save_settings()
     hold_time = state.hold_time,
     attack = state.attack,
     release = state.release,
-    front_spill = state.front_spill,
-    back_spill = state.back_spill,
     pitch_shift = state.pitch_shift,
     filter_base_freq = state.filter_base_freq,
     filter_peak_freq = state.filter_peak_freq,
@@ -861,8 +805,8 @@ function do_generate(is_mono, apply_env)
   local xfade_was_on = r.GetToggleCommandState(40041) == 1
   if not xfade_was_on then r.Main_OnCommand(40041, 0) end
   
-  -- Get time selection with edge inset
-  local inset = math.max(0.0, math.min(0.45, state.inset))
+  -- Get time selection with edge compression
+  local inset = math.max(0.0, math.min(0.30, state.inset))
   local inset_s = state.sel_duration * inset
   local win_start = state.sel_start + inset_s
   local win_end = state.sel_end - inset_s
@@ -1234,7 +1178,7 @@ function do_envelope_only()
   r.SetMediaTrackInfo_Value(temp_track, 'I_NCHAN', 2)
 
   -- Envelope bounds follow the time selection (same inset logic as Generate)
-  local inset = math.max(0.0, math.min(0.45, state.inset))
+  local inset = math.max(0.0, math.min(0.30, state.inset))
   local inset_s = state.sel_duration * inset
   state.generated_start = state.sel_start + inset_s
   state.generated_end = state.sel_end - inset_s
@@ -1281,8 +1225,8 @@ local function calc_env_bounds(sel_start, sel_end)
   local duration = sel_end - sel_start
   if duration <= 0 then return nil end
 
-  local env_start = sel_start - state.front_spill
-  local env_end   = sel_end   + state.back_spill
+  local env_start = sel_start
+  local env_end   = sel_end
 
   local hold_s      = duration * state.hold_time
   local peak_center = sel_start + duration * state.peak_pos
@@ -1579,9 +1523,50 @@ end
 local function panel_visualizer()
   section_header("Woosh")
 
-  -- Inset slider on top of the visualizer
-  state.inset = labeled_slider("Inset", state.inset, 0, 0.45, "%.2f", 0.0,
-    "Shrinks the grain window inside the time selection.\nLonger source sampling, quicker-sounding whoosh.")
+  -- Duration dual-knob slider (mirrored at center, controls grain window compression)
+  local dur_w = r.ImGui_GetContentRegionAvail(ctx)
+  local dur_h = 22
+  r.ImGui_InvisibleButton(ctx, '##duration', dur_w, dur_h)
+  local dur_minx, dur_miny = r.ImGui_GetItemRectMin(ctx)
+  local dur_dl = r.ImGui_GetWindowDrawList(ctx)
+  local dur_mx, dur_my = r.ImGui_GetMousePos(ctx)
+  local dur_active = r.ImGui_IsItemActive(ctx)
+  local dur_hovered = r.ImGui_IsItemHovered(ctx)
+  local MAX_COMPRESS = 0.30
+
+  local left_x = dur_minx + state.inset * dur_w
+  local right_x = dur_minx + (1 - state.inset) * dur_w
+  local dur_cy = dur_miny + dur_h * 0.5
+
+  r.ImGui_DrawList_AddRectFilled(dur_dl, dur_minx, dur_miny, dur_minx + dur_w, dur_miny + dur_h, 0xFF1E1E2E, 4)
+  r.ImGui_DrawList_AddRect(dur_dl, dur_minx, dur_miny, dur_minx + dur_w, dur_miny + dur_h, 0xFF2A2A3A, 4)
+  r.ImGui_DrawList_AddRectFilled(dur_dl, left_x, dur_miny, right_x, dur_miny + dur_h, 0x2200CCCC, 4)
+
+  r.ImGui_DrawList_AddText(dur_dl, dur_minx + 6, dur_miny + 3, theme.TextDisabled, "Duration")
+
+  if dur_active then
+    local t = math.max(0, math.min(1, (dur_mx - dur_minx) / dur_w))
+    local new_inset = math.min(t, 1 - t)
+    state.inset = math.max(0, math.min(MAX_COMPRESS, new_inset))
+    left_x = dur_minx + state.inset * dur_w
+    right_x = dur_minx + (1 - state.inset) * dur_w
+  end
+
+  local active_pct = math.floor((1 - 2 * state.inset) * 100)
+  local pct_str = active_pct .. "%"
+  local pct_w = r.ImGui_CalcTextSize(ctx, pct_str)
+  local pct_col = active_pct > 60 and 0xCCCCCCFF or (active_pct > 30 and 0xCCCC66FF or 0xCC6644FF)
+  r.ImGui_DrawList_AddText(dur_dl, dur_minx + dur_w - pct_w - 6, dur_miny + 3, pct_col, pct_str)
+
+  local knob_r = 6
+  r.ImGui_DrawList_AddCircleFilled(dur_dl, left_x, dur_cy, knob_r + 2, 0x3300CCCC)
+  r.ImGui_DrawList_AddCircleFilled(dur_dl, left_x, dur_cy, knob_r, theme.SliderGrab)
+  r.ImGui_DrawList_AddCircleFilled(dur_dl, right_x, dur_cy, knob_r + 2, 0x3300CCCC)
+  r.ImGui_DrawList_AddCircleFilled(dur_dl, right_x, dur_cy, knob_r, theme.SliderGrab)
+
+  if dur_hovered or dur_active then
+    show_tooltip("Controls the active duration of the grain window.\nBoth edges compress symmetrically toward the center,\ngiving the envelope more room for attack/release.")
+  end
   r.ImGui_Spacing(ctx)
 
   -- Pitch vertical slider on the left of the visualizer
@@ -1700,8 +1685,10 @@ local function panel_visualizer()
   r.ImGui_DrawList_AddRectFilled(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF1E1E2E, 4)
   r.ImGui_DrawList_AddRect(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF2A2A3A, 4)
 
-  -- Label
-  r.ImGui_DrawList_AddText(pan_dl, pan_minx + 6, pan_miny + 3, theme.TextDisabled, "Pan")
+  -- Direction labels inside the slider
+  r.ImGui_DrawList_AddText(pan_dl, pan_minx + 6, pan_miny + 3, theme.TextDisabled, "Left to Right")
+  local rtl_w = r.ImGui_CalcTextSize(ctx, "Right to Left")
+  r.ImGui_DrawList_AddText(pan_dl, pan_minx + pan_w - rtl_w - 6, pan_miny + 3, theme.TextDisabled, "Right to Left")
 
   local pan_cx = pan_minx + pan_w * 0.5
   local pan_cy = pan_miny + pan_h * 0.5
