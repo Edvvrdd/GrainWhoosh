@@ -895,130 +895,111 @@ function do_generate(is_mono, apply_env)
       t = t + grain_s
     end
     
-  else -- Uniform
+  else -- Uniform (layered: each item = full pass → glue → one layer)
     local grain_s_base = state.grain_size / 1000.0
-    local t = win_start
     local mode = state.playback_mode
     
-    -- Build source cycling order
-    local num_sources = #source_tracks
-    local source_order = {}
-    for i = 1, num_sources do source_order[i] = i end
-    
-    local source_idx = 1
-    local read_head = 0.0 -- 0.0 to 1.0 position in source
-    
-    while t < win_end and count < 2000 do
-      local track = source_tracks[source_order[source_idx]]
-      local item = r.GetTrackMediaItem(track, 0)
-      
-      if item then
-        local take = r.GetActiveTake(item)
-        if take then
-          local source = r.GetMediaItemTake_Source(take)
-          if source then
-            local grain_s = grain_s_base * (0.8 + math.random() * 0.4)
-            
-            if t + grain_s > win_end then break end
-            
-            local hop_s = grain_s * (1.0 - density_normalized * 0.75)
-            hop_s = math.max(hop_s, 0.001)
-            
-            local overlap_s = math.max(0.0, grain_s - hop_s)
-            local fade_len = overlap_s * 0.5
-            
-            -- Calculate read-head position based on playback mode
-            local source_len = r.GetMediaSourceLength(source)
-            local max_offs = math.max(0.0, source_len - grain_s)
-            local base_pos
-            
-            if mode == 1 then
-              -- Forward: sweep from start to end
-              read_head = read_head + (hop_s / win_dur)
-              if read_head > 1.0 then read_head = 1.0 end
-              base_pos = read_head * max_offs
-            elseif mode == 2 then
-              -- Reverse: sweep from end to start
-              read_head = read_head - (hop_s / win_dur)
-              if read_head < 0.0 then read_head = 0.0 end
-              base_pos = (1.0 - read_head) * max_offs
-            elseif mode == 3 then
-              -- Ping-Pong: bounce back and forth
-              read_head = read_head + (hop_s / win_dur)
-              if read_head > 1.0 then read_head = 1.0 end
-              local ph = (read_head * 2.0) % 2.0
-              local sweep = ph < 1.0 and ph or 2.0 - ph
-              base_pos = sweep * max_offs
-            else
-              -- Random: random position
-              base_pos = math.random() * max_offs
+    for src_idx = 1, #source_tracks do
+      if count >= 2000 then break end
+      local track = source_tracks[src_idx]
+      local num_ti = r.CountTrackMediaItems(track)
+      for ti = 0, num_ti - 1 do
+        if count >= 2000 then break end
+        local src_item = r.GetTrackMediaItem(track, ti)
+        local sip = r.GetMediaItemInfo_Value(src_item, 'D_POSITION')
+        local sil = r.GetMediaItemInfo_Value(src_item, 'D_LENGTH')
+        if sip < win_end and sip + sil > win_start then
+          local take = r.GetActiveTake(src_item)
+          if take then
+            local source = r.GetMediaItemTake_Source(take)
+            if source then
+              local source_len = r.GetMediaSourceLength(source)
+              local layer_items = {}
+              local t = win_start
+              local read_head = 0.0
+              
+              while t < win_end and #layer_items < 500 do
+                local grain_s = grain_s_base * (0.8 + math.random() * 0.4)
+                if t + grain_s > win_end then break end
+                
+                local overlap_s = grain_s * density_normalized
+                local hop_s = math.max(0.001, grain_s - overlap_s)
+                local fade_len = overlap_s * 0.5
+                
+                local max_offs = math.max(0.0, source_len - grain_s)
+                local base_pos
+                
+                if mode == 1 then
+                  read_head = read_head + (hop_s / win_dur)
+                  if read_head > 1.0 then read_head = 1.0 end
+                  base_pos = read_head * max_offs
+                elseif mode == 2 then
+                  read_head = read_head - (hop_s / win_dur)
+                  if read_head < 0.0 then read_head = 0.0 end
+                  base_pos = (1.0 - read_head) * max_offs
+                elseif mode == 3 then
+                  read_head = read_head + (hop_s / win_dur)
+                  if read_head > 1.0 then read_head = 1.0 end
+                  local ph = (read_head * 2.0) % 2.0
+                  base_pos = (ph < 1.0 and ph or 2.0 - ph) * max_offs
+                else
+                  base_pos = math.random() * max_offs
+                end
+                base_pos = math.max(0.0, math.min(max_offs, base_pos))
+                
+                local ni = r.AddMediaItemToTrack(temp_track)
+                r.SetMediaItemInfo_Value(ni, 'D_POSITION', t)
+                r.SetMediaItemInfo_Value(ni, 'D_LENGTH', grain_s)
+                r.SetMediaItemInfo_Value(ni, 'B_LOOPSRC', 0)
+                
+                local mf = grain_s * 0.49
+                r.SetMediaItemInfo_Value(ni, 'D_FADEINLEN', math.min(fade_len, mf))
+                r.SetMediaItemInfo_Value(ni, 'D_FADEOUTLEN', math.min(fade_len, mf))
+                r.SetMediaItemInfo_Value(ni, 'D_FADEINTYPE', 2)
+                r.SetMediaItemInfo_Value(ni, 'D_FADEOUTTYPE', 2)
+                
+                local nt = r.AddTakeToMediaItem(ni)
+                r.SetMediaItemTake_Source(nt, source)
+                r.SetMediaItemTakeInfo_Value(nt, 'D_STARTOFFS', base_pos)
+                
+                if state.randomness > 0 then
+                  local rs = (math.random() - 0.5) * 2.0 * state.randomness * 12
+                  r.SetMediaItemTakeInfo_Value(nt, 'D_PLAYRATE', 2.0 ^ (rs / 12.0))
+                end
+                
+                table.insert(layer_items, ni)
+                count = count + 1
+                t = t + hop_s
+              end
+              
+              -- Glue this layer's grains into one item
+              if #layer_items > 0 then
+                r.SelectAllMediaItems(0, false)
+                for _, li in ipairs(layer_items) do
+                  r.SetMediaItemSelected(li, true)
+                end
+                r.Main_OnCommand(40362, 0)
+                local glued = r.GetSelectedMediaItem(0, 0)
+                if glued then
+                  table.insert(grain_items, glued)
+                end
+              end
             end
-            base_pos = math.max(0.0, math.min(max_offs, base_pos))
-            
-            local new_item = r.AddMediaItemToTrack(temp_track)
-            r.SetMediaItemInfo_Value(new_item, 'D_POSITION', t)
-            r.SetMediaItemInfo_Value(new_item, 'D_LENGTH', grain_s)
-            r.SetMediaItemInfo_Value(new_item, 'B_LOOPSRC', 0)
-            
-            local max_fade = grain_s * 0.49
-            r.SetMediaItemInfo_Value(new_item, 'D_FADEINLEN', math.min(fade_len, max_fade))
-            r.SetMediaItemInfo_Value(new_item, 'D_FADEOUTLEN', math.min(fade_len, max_fade))
-            r.SetMediaItemInfo_Value(new_item, 'D_FADEINTYPE', 1)
-            r.SetMediaItemInfo_Value(new_item, 'D_FADEOUTTYPE', 1)
-            
-            local new_take = r.AddTakeToMediaItem(new_item)
-            r.SetMediaItemTake_Source(new_take, source)
-            r.SetMediaItemTakeInfo_Value(new_take, 'D_STARTOFFS', base_pos)
-            
-            if state.randomness > 0 then
-              local rnd_st = (math.random() - 0.5) * 2.0 * state.randomness * 12
-              local rate = 2.0 ^ (rnd_st / 12.0)
-              r.SetMediaItemTakeInfo_Value(new_take, 'D_PLAYRATE', rate)
-            end
-            
-            table.insert(grain_items, new_item)
-            count = count + 1
-            
-            -- Cycle to next source
-            source_idx = source_idx + 1
-            if source_idx > num_sources then
-              source_idx = 1
-            end
-            
-            t = t + hop_s
-          else
-            t = t + 0.01
           end
-        else
-          t = t + 0.01
         end
-      else
-        t = t + 0.01
       end
     end
   end
   
-  -- Extend last grain to exactly match time selection end
-  if #grain_items > 0 then
-    local last_item = grain_items[#grain_items]
-    local last_pos = r.GetMediaItemInfo_Value(last_item, 'D_POSITION')
-    local remaining = win_end - last_pos
-    if remaining > 0 then
-      r.SetMediaItemInfo_Value(last_item, 'D_LENGTH', remaining)
-      local max_fade = remaining * 0.49
-      r.SetMediaItemInfo_Value(last_item, 'D_FADEOUTLEN', max_fade)
-    end
-  end
-  
-  -- Glue items
+  -- Glue all layers into one final item
   if #grain_items > 0 then
     r.SelectAllMediaItems(0, false)
-    for _, item in ipairs(grain_items) do
-      r.SetMediaItemSelected(item, true)
+    for _, gi in ipairs(grain_items) do
+      r.SetMediaItemSelected(gi, true)
     end
-    r.Main_OnCommand(40362, 0) -- Glue items
+    r.Main_OnCommand(40362, 0)
   end
-  
+
   -- Restore crossfade setting
   if not xfade_was_on then r.Main_OnCommand(40041, 0) end
   
