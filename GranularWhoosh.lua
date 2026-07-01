@@ -37,22 +37,22 @@ local ctx = r.ImGui_CreateContext("GranularWhoosh")
 
 -- ── Theme (mutable, RGBA format: 0xRRGGBBAA) ──
 local theme = {
-  WindowBg        = 0x12121AFF,
-  ChildBg         = 0x12121AFF,
-  PopupBg         = 0x12121AFF,
-  Border          = 0x2A2A3AFF,
-  Separator       = 0x2A2A3AFF,
-  Text            = 0xEEEEF0FF,
-  TextDisabled    = 0x888899FF,
-  Button          = 0x1A6666FF,
-  ButtonHovered   = 0x229999FF,
-  ButtonActive    = 0x2DBBBBFF,
-  SliderGrab      = 0x00CCCCFF,
-  CheckMark       = 0x00CCCCFF,
-  Header          = 0x1A6666FF,
-  HeaderHovered   = 0x229999FF,
-  FrameBg         = 0x1E1E2EFF,
-  FrameBgHovered  = 0x2A2A40FF,
+  WindowBg        = 0x1A1A1AFF,
+  ChildBg         = 0x1A1A1AFF,
+  PopupBg         = 0x202020FF,
+  Border          = 0x444444FF,
+  Separator       = 0x444444FF,
+  Text            = 0xE0E0E0FF,
+  TextDisabled    = 0x888888FF,
+  Button          = 0x202020FF,
+  ButtonHovered   = 0x333333FF,
+  ButtonActive    = 0x2D8C6DFF,
+  SliderGrab      = 0x2D8C6DFF,
+  CheckMark       = 0x2D8C6DFF,
+  Header          = 0x202020FF,
+  HeaderHovered   = 0x2D8C6DFF,
+  FrameBg         = 0x00000060,
+  FrameBgHovered  = 0x00000080,
   WindowRounding  = 6,
   FrameRounding   = 4,
   GrabRounding    = 3,
@@ -134,10 +134,12 @@ local grain_vis_data = {}
 local function regen_grain_vis_data()
   grain_vis_data = {}
   for i = 1, 200 do
+    local xf = math.random()
     table.insert(grain_vis_data, {
-      x_frac = math.random(),
+      x_frac = xf,
       h_frac = 0.2 + math.random() * 0.8,
-      color_idx = math.random(1, 3)
+      phase_offs = math.random() * 6.28,
+      edge = xf < 0.15 or xf > 0.85,
     })
   end
 end
@@ -242,12 +244,12 @@ function xy_pad(label, val_x, min_x, max_x, val_y, min_y, max_y, fmt_x, fmt_y, t
   local hy = cy + (1.0 - (val_y - min_y) / (max_y - min_y)) * H
 
   -- Crosshair
-  r.ImGui_DrawList_AddLine(dl, cx, hy, cx + pad, hy, 0x4400CCCC, 1.0)
-  r.ImGui_DrawList_AddLine(dl, hx, cy, hx, cy + H, 0x4400CCCC, 1.0)
+  r.ImGui_DrawList_AddLine(dl, cx, hy, cx + pad, hy, 0x442D8C6D, 1.0)
+  r.ImGui_DrawList_AddLine(dl, hx, cy, hx, cy + H, 0x442D8C6D, 1.0)
 
   -- Handle (glow + dot)
-  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 8, 0x3300CCCC)
-  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 5, 0xCC00CCCC)
+  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 8, 0x332D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 5, 0xCC2D8C6D)
   r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 2, 0xFFFFFFFF)
 
   -- Value readout (small, in corners)
@@ -328,8 +330,8 @@ function draw_preview(width_offset)
   r.ImGui_InvisibleButton(ctx, '##preview', W, H)
   local cx, cy = r.ImGui_GetItemRectMin(ctx)
 
-  -- Dark background (reads from theme so it stays in sync with the debug window)
-  r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + W, cy + H, theme.WindowBg, 4)
+  -- Pure black background
+  r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + W, cy + H, 0x000000FF, 4)
   r.ImGui_DrawList_AddRect(dl, cx, cy, cx + W, cy + H, theme.Border, 4)
 
   -- ── DURATION SHADING (inset margins) ──
@@ -390,45 +392,38 @@ function draw_preview(width_offset)
   r.ImGui_DrawList_PushClipRect(dl, cx, cy, cx + W, cy + H, true)
   local density_norm = state.grain_density / 100
   local num_grains = math.floor(30 + (170 * density_norm))
-  local grain_rgb = {0x334455, 0x553344, 0x335544}
   local rx = 7.5 + ((state.grain_size - 10) / 490) * 67.5
   local ry = 7.5
   local cy_mid = cy + H * 0.5
   local vspread = H * 0.5 - ry  -- max vertical offset so dots touch edges exactly
 
-  local function brighten(rgb)
-    local r = math.min(0xFF, ((rgb >> 16) & 0xFF) + 0x66)
-    local g = math.min(0xFF, ((rgb >> 8)  & 0xFF) + 0x66)
-    local b = math.min(0xFF, ( rgb        & 0xFF) + 0x66)
-    return (r << 16) | (g << 8) | b
+  local base_r, base_g, base_b = 0x44, 0x88, 0xCC
+  local dot_col = (base_r << 24) | (base_g << 16) | (base_b << 8) | 0xCC
+  local pan_mag = math.abs(state.pan_value)
+  local shift_col = dot_col
+  if pan_mag > 0.06 then
+    local t = (pan_mag - 0.06) / 0.94
+    local r = math.floor(base_r + (0x88 - base_r) * t)
+    local g = math.floor(base_g + (0x33 - base_g) * t)
+    local b = math.floor(base_b + (0x44 - base_b) * t)
+    shift_col = (r << 24) | (g << 16) | (b << 8) | 0xCC
   end
-
   for i = 1, num_grains do
     local g = grain_vis_data[i]
     local x = cx + margin_w + (g.x_frac * active_w)
-    -- Cull horizontally if the elongated dot would spill
-    if x - rx < cx or x + rx > cx + W then
-      -- dot would spill; skip it
-      else
-        local env = math.max(0, math.min(1, vol_fn(g.x_frac)))
-        local y = cy_mid + (g.h_frac - 0.5) * 2.0 * vspread * env
-        -- Cull vertically (safety; formula should already fit)
-        if y - ry < cy or y + ry > cy + H then
-          -- skip
-        else
-          -- Breathing: modulate alpha only, RGB stays constant (no hue shift).
-          local phase = (preview_frame * 0.05 + g.color_idx * 1.7 + g.x_frac * 6.28) % 6.28
-          local fade = 0.5 + 0.5 * math.sin(phase)  -- 0..1
-          local fill_alpha   = math.floor(fade * 0xAA)            -- 0x00..0xAA
-          local border_alpha = math.floor(fade * 0xFF)            -- 0x00..0xFF
-          local rgb = grain_rgb[g.color_idx]
-          local fill_col   = (fill_alpha   << 24) | rgb
-          local border_col = (border_alpha << 24) | rgb
-          r.ImGui_DrawList_AddEllipseFilled(dl, x, y, rx, ry, fill_col)
-          r.ImGui_DrawList_AddEllipse(dl, x, y, rx, ry, border_col, 0, 0, 1.5)
-        end
+    if x - rx >= cx and x + rx <= cx + W then
+      local env = math.max(0, math.min(1, vol_fn(g.x_frac)))
+      local y = cy_mid + (g.h_frac - 0.5) * 2.0 * vspread * env
+      if y - ry >= cy and y + ry <= cy + H then
+        local phase = (preview_frame * 0.05 + g.phase_offs) % 6.28
+        local fade = 0.1 + 0.9 * (0.5 + 0.5 * math.sin(phase))
+        local dr, ddy = rx * fade, ry * fade
+        local col = g.edge and pan_mag > 0.06 and shift_col or dot_col
+        r.ImGui_DrawList_AddEllipseFilled(dl, x, y, dr, ddy, col)
+        r.ImGui_DrawList_AddEllipse(dl, x, y, dr, ddy, col, 0, 0, 1.0)
       end
     end
+  end
   r.ImGui_DrawList_PopClipRect(dl)
 
   -- ── PITCH CURVE (white line, only when pitch_shift ≠ 0) ──
@@ -456,10 +451,10 @@ function draw_preview(width_offset)
   local filter_base_y = cy + H - hz_to_norm(state.filter_base_freq) * (H - 8) - 4
   local filter_peak_y = cy + H - hz_to_norm(state.filter_peak_freq) * (H - 8) - 4
   if state.filter_peak_freq < 20000.0 then
-    r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0xCC00FF88, 1.5)
+    r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0xCC2D8C6D, 1.5)
   end
   if state.filter_base_freq > 20.0 then
-    r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x6600FF88, 1.0)
+    r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x662D8C6D, 1.0)
   end
 
   -- (Spill lines are drawn after the peak dot — they need its position)
@@ -501,13 +496,13 @@ function draw_preview(width_offset)
     peak_dot_rx = 8 + state.hold_time * 80
   end
 
-  -- Draw the peak dot as an ellipse (bright blue, glowy)
-  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx + 4, peak_dot_ry + 4, 0x334488FF)  -- outer glow
-  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx,     peak_dot_ry,     0xFF4488FF)  -- body
-  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx - 4, peak_dot_ry - 4, 0xFFAACCFF)  -- highlight
+  -- Draw the peak dot as an ellipse (gold, glowy)
+  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx + 4, peak_dot_ry + 4, 0x332D8C6D)  -- outer glow
+  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx,     peak_dot_ry,     0xFF2D8C6D)  -- body
+  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx - 4, peak_dot_ry - 4, 0xFF33A07C)  -- highlight
 
   -- Small directional triangles around the dot (up/down only)
-  local arr_col = 0xFFAACCFF
+  local arr_col = 0xFF33A07C
   local arr_s = 4  -- triangle size
   local arr_off = peak_dot_ry + 6  -- distance from dot center
   -- Up: ▲
@@ -546,15 +541,15 @@ function draw_preview(width_offset)
     rise_tri_x = cx + ((1.0 - state.attack) / 2.0) * rise_region_w
   end
 
-  -- Draw the < triangle (cyan, glowy)
+  -- Draw the < triangle (gold, glowy)
   local p1x, p1y = rise_tri_x - rise_tri_s, rise_tri_y           -- left point
   local p2x, p2y = rise_tri_x + rise_tri_s, rise_tri_y - rise_tri_s  -- top right
   local p3x, p3y = rise_tri_x + rise_tri_s, rise_tri_y + rise_tri_s  -- bottom right
-  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0x3300CCCC)  -- glow (bigger)
+  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0x332D8C6D)  -- glow (bigger)
   local gs = rise_tri_s + 3
-  r.ImGui_DrawList_AddTriangleFilled(dl, rise_tri_x - gs, rise_tri_y, rise_tri_x + gs, rise_tri_y - gs, rise_tri_x + gs, rise_tri_y + gs, 0x3300CCCC)
-  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0xFF00CCCC)  -- body
-  r.ImGui_DrawList_AddTriangleFilled(dl, rise_tri_x - rise_tri_s + 3, rise_tri_y, rise_tri_x + rise_tri_s - 3, rise_tri_y - rise_tri_s + 4, rise_tri_x + rise_tri_s - 3, rise_tri_y + rise_tri_s - 4, 0xFF66EEEE)  -- highlight
+  r.ImGui_DrawList_AddTriangleFilled(dl, rise_tri_x - gs, rise_tri_y, rise_tri_x + gs, rise_tri_y - gs, rise_tri_x + gs, rise_tri_y + gs, 0x332D8C6D)
+  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0xFF2D8C6D)  -- body
+  r.ImGui_DrawList_AddTriangleFilled(dl, rise_tri_x - rise_tri_s + 3, rise_tri_y, rise_tri_x + rise_tri_s - 3, rise_tri_y - rise_tri_s + 4, rise_tri_x + rise_tri_s - 3, rise_tri_y + rise_tri_s - 4, 0xFF33A07C)  -- highlight
 
   -- ── FALL TENSION TRIANGLE (draggable, horizontal only) ──
   -- Sits in the fall region (peak dot to right edge). > points right.
@@ -581,14 +576,14 @@ function draw_preview(width_offset)
     fall_tri_x = fall_region_start + ((state.release + 1.0) / 2.0) * fall_region_w
   end
 
-  -- Draw the > triangle (cyan, glowy)
+  -- Draw the > triangle (gold, glowy)
   local fp1x, fp1y = fall_tri_x + fall_tri_s, fall_tri_y            -- right point
   local fp2x, fp2y = fall_tri_x - fall_tri_s, fall_tri_y - fall_tri_s  -- top left
   local fp3x, fp3y = fall_tri_x - fall_tri_s, fall_tri_y + fall_tri_s  -- bottom left
   local fgs = fall_tri_s + 3
-  r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fgs, fall_tri_y, fall_tri_x - fgs, fall_tri_y - fgs, fall_tri_x - fgs, fall_tri_y + fgs, 0x3300CCCC)
-  r.ImGui_DrawList_AddTriangleFilled(dl, fp1x, fp1y, fp2x, fp2y, fp3x, fp3y, 0xFF00CCCC)  -- body
-  r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fall_tri_s - 3, fall_tri_y, fall_tri_x - fall_tri_s + 3, fall_tri_y - fall_tri_s + 4, fall_tri_x - fall_tri_s + 3, fall_tri_y + fall_tri_s - 4, 0xFF66EEEE)  -- highlight
+  r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fgs, fall_tri_y, fall_tri_x - fgs, fall_tri_y - fgs, fall_tri_x - fgs, fall_tri_y + fgs, 0x332D8C6D)
+  r.ImGui_DrawList_AddTriangleFilled(dl, fp1x, fp1y, fp2x, fp2y, fp3x, fp3y, 0xFF2D8C6D)  -- body
+  r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fall_tri_s - 3, fall_tri_y, fall_tri_x - fall_tri_s + 3, fall_tri_y - fall_tri_s + 4, fall_tri_x - fall_tri_s + 3, fall_tri_y + fall_tri_s - 4, 0xFF33A07C)  -- highlight
 
   -- ── HOVER READOUT ──
   if not peak_dragging and not rise_dragging and not fall_dragging and mx >= cx and mx <= cx + W and my >= cy and my <= cy + H then
@@ -1415,7 +1410,7 @@ local function panel_identity()
   if msg:find("Error") then
     status_col = 0xCC4444FF
   elseif msg:find("Done") or msg:find("Rendered") or msg:find("Resampled") then
-    status_col = 0x44CC88FF
+    status_col = 0x442D8C6D
   end
   r.ImGui_TextColored(ctx, status_col, msg)
 end
@@ -1424,25 +1419,25 @@ local function panel_sampling()
   section_header("Sampling Mode")
   local half_w = (r.ImGui_GetContentRegionAvail(ctx) - 4) * 0.5
   if state.sampling_mode == 0 then
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x1A6666FF)
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x229999FF)
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x2DBBBBFF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D8C6DFF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
   else
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x333344FF)
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x444466FF)
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x555577FF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x202020FF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x333333FF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x444444FF)
   end
   if r.ImGui_Button(ctx, "Uniform", half_w, 28) then state.sampling_mode = 0 end
   r.ImGui_PopStyleColor(ctx, 3)
   r.ImGui_SameLine(ctx, 0, 4)
   if state.sampling_mode == 1 then
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x1A6666FF)
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x229999FF)
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x2DBBBBFF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D8C6DFF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
   else
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x333344FF)
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x444466FF)
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x555577FF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x202020FF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x333333FF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x444444FF)
   end
   if r.ImGui_Button(ctx, "Sequential", half_w, 28) then state.sampling_mode = 1 end
   r.ImGui_PopStyleColor(ctx, 3)
@@ -1456,13 +1451,13 @@ local function panel_sampling()
       local idx = row * 2 + col + 1
       if col > 0 then r.ImGui_SameLine(ctx, 0, 4) end
       if state.playback_mode == idx then
-        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x1A6666FF)
-        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x229999FF)
-        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x2DBBBBFF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D8C6DFF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
       else
-        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x333344FF)
-        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x444466FF)
-        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x555577FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x202020FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x333333FF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x444444FF)
       end
       if r.ImGui_Button(ctx, PLAYBACK_MODES[idx], dir_half_w, 28) then
         state.playback_mode = idx
@@ -1498,9 +1493,9 @@ local function panel_output()
   if not can_preview then r.ImGui_EndDisabled(ctx) end
   -- Row 2: Generate (bounce temp track + envelopes to a new rendered track)
   if not can_generate then r.ImGui_BeginDisabled(ctx) end
-  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x4488AAFF)
-  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x5599BBFF)
-  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x66AACCFF)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D8C6DFF)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
   if r.ImGui_Button(ctx, "Generate Stereo", half_w, 28) then do_render(false) end
   r.ImGui_SameLine(ctx, 0, 4)
   if r.ImGui_Button(ctx, "Generate Mono", half_w, 28) then do_render(true) end
@@ -1538,9 +1533,9 @@ local function panel_visualizer()
   local right_x = dur_minx + (1 - state.inset) * dur_w
   local dur_cy = dur_miny + dur_h * 0.5
 
-  r.ImGui_DrawList_AddRectFilled(dur_dl, dur_minx, dur_miny, dur_minx + dur_w, dur_miny + dur_h, 0xFF1E1E2E, 4)
-  r.ImGui_DrawList_AddRect(dur_dl, dur_minx, dur_miny, dur_minx + dur_w, dur_miny + dur_h, 0xFF2A2A3A, 4)
-  r.ImGui_DrawList_AddRectFilled(dur_dl, left_x, dur_miny, right_x, dur_miny + dur_h, 0x2200CCCC, 4)
+  r.ImGui_DrawList_AddRectFilled(dur_dl, dur_minx, dur_miny, dur_minx + dur_w, dur_miny + dur_h, 0xFF1A1A1A, 4)
+  r.ImGui_DrawList_AddRect(dur_dl, dur_minx, dur_miny, dur_minx + dur_w, dur_miny + dur_h, 0xFF444444, 4)
+  r.ImGui_DrawList_AddRectFilled(dur_dl, left_x, dur_miny, right_x, dur_miny + dur_h, 0x222D8C6D, 4)
 
   r.ImGui_DrawList_AddText(dur_dl, dur_minx + 6, dur_miny + 3, theme.TextDisabled, "Duration")
 
@@ -1559,9 +1554,9 @@ local function panel_visualizer()
   r.ImGui_DrawList_AddText(dur_dl, dur_minx + dur_w - pct_w - 6, dur_miny + 3, pct_col, pct_str)
 
   local knob_r = 6
-  r.ImGui_DrawList_AddCircleFilled(dur_dl, left_x, dur_cy, knob_r + 2, 0x3300CCCC)
+  r.ImGui_DrawList_AddCircleFilled(dur_dl, left_x, dur_cy, knob_r + 2, 0x332D8C6D)
   r.ImGui_DrawList_AddCircleFilled(dur_dl, left_x, dur_cy, knob_r, theme.SliderGrab)
-  r.ImGui_DrawList_AddCircleFilled(dur_dl, right_x, dur_cy, knob_r + 2, 0x3300CCCC)
+  r.ImGui_DrawList_AddCircleFilled(dur_dl, right_x, dur_cy, knob_r + 2, 0x332D8C6D)
   r.ImGui_DrawList_AddCircleFilled(dur_dl, right_x, dur_cy, knob_r, theme.SliderGrab)
 
   if dur_hovered or dur_active then
@@ -1595,8 +1590,8 @@ local function panel_visualizer()
   local fs_hovered = r.ImGui_IsItemHovered(ctx)
 
   -- Track (background)
-  r.ImGui_DrawList_AddRectFilled(fs_dl, fs_cx + 6, fs_cy, fs_cx + 14, fs_cy + fslider_h, 0xFF1E1E2E, 3)
-  r.ImGui_DrawList_AddRect(fs_dl, fs_cx + 6, fs_cy, fs_cx + 14, fs_cy + fslider_h, 0xFF2A2A3A, 3)
+  r.ImGui_DrawList_AddRectFilled(fs_dl, fs_cx + 6, fs_cy, fs_cx + 14, fs_cy + fslider_h, 0xFF1A1A1A, 3)
+  r.ImGui_DrawList_AddRect(fs_dl, fs_cx + 6, fs_cy, fs_cx + 14, fs_cy + fslider_h, 0xFF444444, 3)
 
   -- Frequency range is logarithmic: 20Hz..20000Hz
   local function hz_to_y(hz)
@@ -1612,7 +1607,7 @@ local function panel_visualizer()
   local bot_knob_y = hz_to_y(state.filter_base_freq)
 
   -- Fill between knobs (active filter range)
-  r.ImGui_DrawList_AddRectFilled(fs_dl, fs_cx + 7, top_knob_y, fs_cx + 13, bot_knob_y, 0x4400FF88, 2)
+  r.ImGui_DrawList_AddRectFilled(fs_dl, fs_cx + 7, top_knob_y, fs_cx + 13, bot_knob_y, 0x442D8C6D, 2)
 
   -- Determine which knob to drag
   local mouse_clicked = r.ImGui_IsMouseClicked(ctx, 0)
@@ -1653,10 +1648,10 @@ local function panel_visualizer()
   bot_knob_y = hz_to_y(state.filter_base_freq)
 
   -- Draw knobs (top = bright green, bottom = dim green)
-  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, top_knob_y, 7, 0xFF00FF88)
-  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, top_knob_y, 4, 0xFFAAFFDD)
-  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, bot_knob_y, 7, 0xFF008844)
-  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, bot_knob_y, 4, 0xFF44AA88)
+  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, top_knob_y, 7, 0xFF2D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, top_knob_y, 4, 0xFF33A07C)
+  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, bot_knob_y, 7, 0xFF1A5C4A)
+  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, bot_knob_y, 4, 0xFF22705A)
 
   if fs_hovered or filter_top_dragging or filter_bottom_dragging then
     local filter_off_now =
@@ -1682,8 +1677,8 @@ local function panel_visualizer()
   local pan_hovered = r.ImGui_IsItemHovered(ctx)
 
   -- Track background
-  r.ImGui_DrawList_AddRectFilled(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF1E1E2E, 4)
-  r.ImGui_DrawList_AddRect(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF2A2A3A, 4)
+  r.ImGui_DrawList_AddRectFilled(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF1A1A1A, 4)
+  r.ImGui_DrawList_AddRect(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF444444, 4)
 
   -- Direction labels inside the slider
   r.ImGui_DrawList_AddText(pan_dl, pan_minx + 6, pan_miny + 3, theme.TextDisabled, "Left to Right")
@@ -1693,7 +1688,7 @@ local function panel_visualizer()
   local pan_cx = pan_minx + pan_w * 0.5
   local pan_cy = pan_miny + pan_h * 0.5
   -- Center tick marks the neutral position
-  r.ImGui_DrawList_AddLine(pan_dl, pan_cx, pan_miny + 3, pan_cx, pan_miny + pan_h - 3, 0x662A2A3A, 1)
+  r.ImGui_DrawList_AddLine(pan_dl, pan_cx, pan_miny + 3, pan_cx, pan_miny + pan_h - 3, 0x66444444, 1)
 
   -- Dead zone around center: values within this band snap to 0
   local pan_dead = 0.06
