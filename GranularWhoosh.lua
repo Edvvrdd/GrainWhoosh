@@ -26,13 +26,10 @@
 
 local r = reaper
 
--- Check for ReaImGui
 if not r.ImGui_CreateContext then
   r.ShowMessageBox("This script requires ReaImGui.", "ReaImGui not found", 0)
   return
 end
-
--- Initialize ReaImGui context
 local ctx = r.ImGui_CreateContext("GranularWhoosh")
 
 -- ── Theme (mutable, RGBA format: 0xRRGGBBAA) ──
@@ -115,15 +112,10 @@ local function section_header(label)
   end
 end
 
--- Constants
 local PLAYBACK_MODES = {"Forward", "Reverse", "Ping-Pong", "Random"}
 local SAMPLING_MODES = {"Uniform", "Sequential"}
--- (direction constants removed — pan and pitch are now single signed sliders)
 
--- Seed Lua's PRNG with high-resolution entropy (wallclock + REAPER's
--- precise timer). Default Lua starts with a fixed seed, so without this
--- every script run / preview / render would produce identical grains.
--- Call this before any math.random() usage that should differ each time.
+-- Seed PRNG with wallclock + REAPER precise timer so each run differs
 local function seed_random()
   math.randomseed(os.time() + math.floor((r.time_precise() % 1) * 1000000))
   math.random()  -- discard first value (poorly distributed in many Lua builds)
@@ -144,7 +136,7 @@ local function regen_grain_vis_data()
   end
 end
 
-seed_random()           -- fresh visualization dots each script run
+seed_random()
 regen_grain_vis_data()
 
 -- Initial State
@@ -316,23 +308,58 @@ local rise_dragging = false  -- tracks whether the rise tension triangle is bein
 local fall_dragging = false  -- tracks whether the fall tension triangle is being dragged
 local filter_top_dragging = false    -- filter peak knob (top)
 local filter_bottom_dragging = false -- filter base knob (bottom)
+local pitch_dragging = false
+local dur_dragging = false
+local pan_dragging = false
 
-function draw_preview(width_offset)
+function draw_preview()
   preview_frame = preview_frame + 1
 
   local dl = r.ImGui_GetWindowDrawList(ctx)
-  local W = r.ImGui_GetContentRegionAvail(ctx) - (width_offset or 0)
-  local H = 160
+  local W = r.ImGui_GetContentRegionAvail(ctx)
+  local H = 200
 
   -- InvisibleButton captures mouse events so the window isn't dragged
   -- when interacting with the visualizer. All drawing happens via the
   -- DrawList using the button's screen position.
   r.ImGui_InvisibleButton(ctx, '##preview', W, H)
   local cx, cy = r.ImGui_GetItemRectMin(ctx)
+  local mx, my = r.ImGui_GetMousePos(ctx)
+  local mouse_down = r.ImGui_IsMouseDown(ctx, 0)
+  local mouse_clicked = r.ImGui_IsMouseClicked(ctx, 0)
 
   -- Pure black background
   r.ImGui_DrawList_AddRectFilled(dl, cx, cy, cx + W, cy + H, 0x000000FF, 4)
   r.ImGui_DrawList_AddRect(dl, cx, cy, cx + W, cy + H, theme.Border, 4)
+
+  -- ── DURATION STRIP (top edge of visualizer) ──
+  local dur_x0 = cx + 16
+  local dur_x1 = cx + W - 16
+  local dur_active_w = dur_x1 - dur_x0
+  local dur_cy = cy + 10
+  local dur_inset = math.max(0.0, math.min(0.30, state.inset))
+  local dur_left = dur_x0 + dur_inset * dur_active_w
+  local dur_right = dur_x1 - dur_inset * dur_active_w
+
+  r.ImGui_DrawList_AddRectFilled(dl, dur_left, cy + 5, dur_right, cy + 15, 0x222D8C6D, 2)
+
+  local dk_r = 5
+  r.ImGui_DrawList_AddCircleFilled(dl, dur_left, dur_cy, dk_r + 2, 0x332D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, dur_left, dur_cy, dk_r, theme.SliderGrab)
+  r.ImGui_DrawList_AddCircleFilled(dl, dur_right, dur_cy, dk_r + 2, 0x332D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, dur_right, dur_cy, dk_r, theme.SliderGrab)
+
+  local dur_hit = my >= cy and my <= cy + 20 and mx >= dur_x0 and mx <= dur_x1
+  if mouse_clicked and dur_hit and not peak_dragging and not rise_dragging and not fall_dragging and not pitch_dragging and not filter_top_dragging and not filter_bottom_dragging then
+    dur_dragging = true
+  end
+  if not mouse_down then
+    dur_dragging = false
+  end
+  if dur_dragging then
+    local t = math.max(0, math.min(1, (mx - dur_x0) / dur_active_w))
+    state.inset = math.max(0, math.min(0.30, math.min(t, 1 - t)))
+  end
 
   -- ── DURATION SHADING (inset margins) ──
   local inset_frac = math.max(0.0, math.min(0.30, state.inset))
@@ -464,9 +491,6 @@ function draw_preview(width_offset)
   local peak_dot_y = cy + H * 0.5
   local peak_dot_ry = 8
   local peak_dot_rx = 8 + state.hold_time * 80  -- width grows with hold time (0..0.5 → 8..48)
-  local mx, my = r.ImGui_GetMousePos(ctx)
-  local mouse_down = r.ImGui_IsMouseDown(ctx, 0)
-  local mouse_clicked = r.ImGui_IsMouseClicked(ctx, 0)
   -- Hit test against the ellipse (approximate with bounding box + a little padding)
   local hit_dx = math.abs(mx - peak_dot_x)
   local hit_dy = math.abs(my - peak_dot_y)
@@ -585,8 +609,149 @@ function draw_preview(width_offset)
   r.ImGui_DrawList_AddTriangleFilled(dl, fp1x, fp1y, fp2x, fp2y, fp3x, fp3y, 0xFF2D8C6D)  -- body
   r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fall_tri_s - 3, fall_tri_y, fall_tri_x - fall_tri_s + 3, fall_tri_y - fall_tri_s + 4, fall_tri_x - fall_tri_s + 3, fall_tri_y + fall_tri_s - 4, 0xFF33A07C)  -- highlight
 
+  -- ── PITCH KNOB (left edge of visualizer) ──
+  local p_knob_x = cx + 8
+  local p_inset = 5
+  local function p_val_to_y(v) return cy + p_inset + ((v + 12) / 24) * (H - 2 * p_inset) end
+  local function p_y_to_val(y) return math.max(-12, math.min(12, ((y - cy - p_inset) / (H - 2 * p_inset)) * 24 - 12)) end
+  local p_knob_y = p_val_to_y(state.pitch_shift)
+  local p_hit = math.abs(mx - p_knob_x) < 8 and math.abs(my - p_knob_y) < 8
+
+  if mouse_clicked and p_hit and not peak_dragging and not rise_dragging and not fall_dragging then
+    pitch_dragging = true
+  end
+  if not mouse_down then
+    pitch_dragging = false
+  end
+  if pitch_dragging then
+    state.pitch_shift = p_y_to_val(my)
+    if math.abs(state.pitch_shift) < 0.5 then state.pitch_shift = 0.0 end
+    p_knob_y = p_val_to_y(state.pitch_shift)
+  end
+  if p_hit and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
+    state.pitch_shift = 0.0
+  end
+
+  r.ImGui_DrawList_AddCircleFilled(dl, p_knob_x, p_knob_y, p_inset, 0xFF2D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, p_knob_x, p_knob_y, 2, 0xFF33A07C)
+
+  if p_hit or pitch_dragging then
+    show_tooltip("Pitch shift at the envelope peak (semitones).\n+ = pitch rises then falls (approach)\n- = pitch dips then rises (recede)\n0 = no pitch envelope\nDrag up/down. Double-click to reset.")
+  end
+
+  -- ── PAN STRIP (bottom edge of visualizer) ──
+  local pan_x0 = cx + 16
+  local pan_x1 = cx + W - 16
+  local pan_active_w = pan_x1 - pan_x0
+  local pan_cy = cy + H - 10
+
+  local pan_hit = my >= cy + H - 20 and my <= cy + H and mx >= pan_x0 and mx <= pan_x1
+  if mouse_clicked and pan_hit and not dur_dragging and not peak_dragging and not rise_dragging and not fall_dragging and not pitch_dragging then
+    pan_dragging = true
+  end
+  if not mouse_down then
+    pan_dragging = false
+  end
+  if pan_dragging then
+    local t = math.max(0.0, math.min(1.0, (mx - pan_x0) / pan_active_w))
+    local raw = t * 2.0 - 1.0
+    state.pan_value = math.abs(raw) < 0.06 and 0.0 or raw
+  end
+  if pan_hit and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
+    state.pan_value = 0.0
+  end
+
+  local pkx = pan_x0 + (state.pan_value + 1.0) * 0.5 * pan_active_w
+  if math.abs(state.pan_value) < 0.06 then
+    local ear_r = 2.2
+    local head_r = 4.6
+    local edx = head_r + ear_r - 0.5
+    r.ImGui_DrawList_AddCircleFilled(dl, pkx - edx, pan_cy, ear_r, theme.SliderGrab)
+    r.ImGui_DrawList_AddCircleFilled(dl, pkx,       pan_cy, head_r, theme.SliderGrab)
+    r.ImGui_DrawList_AddCircleFilled(dl, pkx + edx, pan_cy, ear_r, theme.SliderGrab)
+  else
+    local s = 5.5
+    local dx = s * 1.7
+    local pr = state.pan_value <= 0.0
+    for i = -1, 1 do
+      local tx = pkx + i * dx
+      if pr then
+        r.ImGui_DrawList_AddTriangleFilled(dl, tx + s, pan_cy, tx - s, pan_cy - s, tx - s, pan_cy + s, theme.SliderGrab)
+      else
+        r.ImGui_DrawList_AddTriangleFilled(dl, tx - s, pan_cy, tx + s, pan_cy - s, tx + s, pan_cy + s, theme.SliderGrab)
+      end
+    end
+  end
+
+  if pan_hit or pan_dragging then
+    show_tooltip("Center = no pan sweep.\nLeft = L->R sweep.\nRight = R->L sweep.\nEdges = 100% strength.\nDouble-click to reset.")
+  end
+
+  -- ── FILTER KNOBS (right edge of visualizer) ──
+  local f_knob_x = cx + W - 8
+  local f_inset = 6
+  local function f_hz_to_y(hz)
+    local n = math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
+    return cy + f_inset + (1 - n) * (H - 2 * f_inset)
+  end
+  local function f_y_to_hz(y)
+    local n = math.max(0.0, math.min(1.0, 1.0 - (y - cy - f_inset) / (H - 2 * f_inset)))
+    return 20.0 * (24000.0 / 20.0) ^ n
+  end
+
+  local ft_y = f_hz_to_y(state.filter_peak_freq)
+  local fb_y = f_hz_to_y(state.filter_base_freq)
+
+  r.ImGui_DrawList_AddRectFilled(dl, f_knob_x - 2, ft_y, f_knob_x + 2, fb_y, 0x442D8C6D, 1)
+
+  local f_dist_top = math.abs(my - ft_y)
+  local f_dist_bot = math.abs(my - fb_y)
+
+  -- Only activate on knob hit (not the fill line)
+  if mouse_clicked and not dur_dragging and not pan_dragging and not pitch_dragging and not peak_dragging and not rise_dragging and not fall_dragging then
+    if f_dist_top < f_dist_bot and f_dist_top < 8 then
+      filter_top_dragging = true
+    elseif f_dist_bot < 8 then
+      filter_bottom_dragging = true
+    end
+  end
+  if not mouse_down then
+    filter_top_dragging = false
+    filter_bottom_dragging = false
+  end
+
+  local min_hz_gap = 100.0
+  if filter_top_dragging then
+    local new_hz = f_y_to_hz(math.max(cy + f_inset + 1, math.min(fb_y - 4, my)))
+    new_hz = math.max(state.filter_base_freq + min_hz_gap, math.min(20000.0, new_hz))
+    state.filter_peak_freq = new_hz
+  end
+  if filter_bottom_dragging then
+    local new_hz = f_y_to_hz(math.min(cy + H - f_inset - 1, math.max(ft_y + 4, my)))
+    new_hz = math.min(state.filter_peak_freq - min_hz_gap, math.max(20.0, new_hz))
+    state.filter_base_freq = new_hz
+  end
+
+  ft_y = f_hz_to_y(state.filter_peak_freq)
+  fb_y = f_hz_to_y(state.filter_base_freq)
+
+  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, ft_y, f_inset, 0xFF2D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, ft_y, 3, 0xFF33A07C)
+  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, fb_y, f_inset, 0xFF1A5C4A)
+  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, fb_y, 3, 0xFF22705A)
+
+  local f_hover = f_dist_top < 8 or f_dist_bot < 8
+  if f_hover or filter_top_dragging or filter_bottom_dragging then
+    local filter_off_now = state.filter_peak_freq >= 20000.0 and state.filter_base_freq >= state.filter_peak_freq - 100.5
+    local tip = string.format("Peak: %.0f Hz  Base: %.0f Hz", state.filter_peak_freq, state.filter_base_freq)
+    if filter_off_now then
+      tip = tip .. "\n(EQ doppler bypassed — both knobs at maximum)"
+    end
+    show_tooltip(tip)
+  end
+
   -- ── HOVER READOUT ──
-  if not peak_dragging and not rise_dragging and not fall_dragging and mx >= cx and mx <= cx + W and my >= cy and my <= cy + H then
+  if not peak_dragging and not rise_dragging and not fall_dragging and not pitch_dragging and not filter_top_dragging and not filter_bottom_dragging and not dur_dragging and not pan_dragging and mx >= cx and mx <= cx + W and my >= cy and my <= cy + H then
     local hover_t = (mx - cx) / W
     hover_t = math.max(0, math.min(1, hover_t))
     local hover_x = cx + hover_t * W
@@ -777,26 +942,22 @@ function do_generate(is_mono, apply_env)
 
   r.Undo_BeginBlock()
   r.PreventUIRefresh(1)
-  
-  -- Remove existing temp track
+
   local existing_track, _ = find_temp_track()
   if existing_track then
     r.DeleteTrack(existing_track)
   end
   
-  -- Get unique name
+  -- Ensure unique temp track name (stale GW_Track leftover can collide)
   local unique_name = get_unique_temp_name()
   state.temp_track_name = unique_name
   
-  -- Create temp track at index 0 (top of project)
   r.InsertTrackAtIndex(0, true)
   local temp_track = r.GetTrack(0, 0)
   r.GetSetMediaTrackInfo_String(temp_track, 'P_NAME', unique_name, true)
-  
-  -- Set channel count (1=mono, 2=stereo)
   r.SetMediaTrackInfo_Value(temp_track, 'I_NCHAN', is_mono and 1 or 2)
   
-  -- Force auto-crossfade on
+  -- Force auto-crossfade on so grain edges blend
   local xfade_was_on = r.GetToggleCommandState(40041) == 1
   if not xfade_was_on then r.Main_OnCommand(40041, 0) end
   
@@ -807,13 +968,11 @@ function do_generate(is_mono, apply_env)
   local win_end = state.sel_end - inset_s
   local win_dur = math.max(0.001, win_end - win_start)
   
-  -- Use cached source tracks (populated by refresh_source_info)
   local source_tracks = state.source_tracks
   
   local grain_items = {}
   local count = 0
   
-  -- Calculate actual values from unified sliders
   local density_normalized = state.grain_density / 100
   
   if state.sampling_mode == 1 then -- Sequential
@@ -1034,14 +1193,9 @@ function do_resample()
   
   r.Undo_BeginBlock()
   r.PreventUIRefresh(1)
-  
-  -- Get the glued item
+
   local temp_item = r.GetTrackMediaItem(temp_track, 0)
-  
-  -- Find folder index
   local folder_idx = r.GetMediaTrackInfo_Value(state.folder_track, 'IP_TRACKNUMBER')
-  
-  -- Create new track under folder
   r.InsertTrackAtIndex(folder_idx, true)
   local new_track = r.GetTrack(0, folder_idx)
   
@@ -1057,10 +1211,7 @@ function do_resample()
   end
   r.GetSetMediaTrackInfo_String(new_track, 'P_NAME', 'Resample_' .. resample_num, true)
   
-  -- Move item to new track
   r.MoveMediaItemToTrack(temp_item, new_track)
-  
-  -- Delete temp track
   r.DeleteTrack(temp_track)
   
   state.has_generated_item = false
@@ -1077,7 +1228,6 @@ function do_render(is_mono)
   if is_mono == nil then is_mono = state.is_mono end
   state.is_mono = is_mono
 
-  -- Find temp track
   local temp_track, temp_idx = find_temp_track()
   if not temp_track then
     state.status_msg = "Temp track not found — run Preview first"
@@ -1087,46 +1237,32 @@ function do_render(is_mono)
   r.Undo_BeginBlock()
   r.PreventUIRefresh(1)
 
-  -- Set time selection to generated range
   local prev_ts_s, prev_ts_e = r.GetSet_LoopTimeRange(false, false, 0, 0, false)
   r.GetSet_LoopTimeRange(true, false, state.generated_start, state.generated_end, false)
 
-  -- Create bounce track at the end
+  -- Bounce temp track through FX to a new stem track via render-to-stem (41716)
   local track_count = r.CountTracks(0)
   r.InsertTrackAtIndex(track_count, true)
   local bounce_track = r.GetTrack(0, track_count)
-
-  -- Create send from temp track to bounce track
   r.CreateTrackSend(temp_track, bounce_track)
-
-  -- Select only bounce track, run render action
   r.SetOnlyTrackSelected(bounce_track)
-
-  -- 41716 = Track: Render selected area of tracks to stereo post-fader stem tracks
   r.Main_OnCommand(41716, 0)
 
-  -- Remove the send from temp_track
   local send_count = r.GetTrackNumSends(temp_track, 0)
   if send_count > 0 then
     r.RemoveTrackSend(temp_track, 0, send_count - 1)
   end
-
-  -- Delete the bounce track
   r.DeleteTrack(bounce_track)
 
-  -- The render action leaves a new stem track selected
   local stem_track = r.GetSelectedTrack(0, 0)
   if stem_track then
     r.GetSetMediaTrackInfo_String(stem_track, 'P_NAME', state.temp_track_name .. "_render", true)
     local nchan = state.is_mono and 1 or 2
     r.SetMediaTrackInfo_Value(stem_track, 'I_NCHAN', nchan)
     r.SetMediaTrackInfo_Value(temp_track, 'B_MUTE', 0)
-
-    -- Move stem track right below temp track
     r.ReorderSelectedTracks(temp_idx + 1, 0)
   end
 
-  -- Restore time selection
   r.GetSet_LoopTimeRange(true, false, prev_ts_s, prev_ts_e, false)
 
   state.status_msg = string.format("Rendered — '%s_render' placed below temp track", state.temp_track_name)
@@ -1368,7 +1504,7 @@ local DOCK_PANEL_W = { 215, 225, 225, 290, 430 }
 -- Panel-body functions (shared by floating and docked layouts)
 ---------------------------------------------------------------------
 local function panel_identity()
-  local tb_h = 30
+  local tb_h = 38
   local id_avail = r.ImGui_GetContentRegionAvail(ctx)
   r.ImGui_InvisibleButton(ctx, '##titleblock', id_avail, tb_h)
   local tminx, tminy = r.ImGui_GetItemRectMin(ctx)
@@ -1376,22 +1512,16 @@ local function panel_identity()
   local sq = tb_h - 4
   r.ImGui_DrawList_AddRectFilled(tdl, tminx, tminy, tminx + sq, tminy + sq, theme.Button, 4)
   r.ImGui_DrawList_AddRectFilled(tdl, tminx + 6, tminy + 6, tminx + sq - 6, tminy + sq - 6, theme.SliderGrab, 3)
-  r.ImGui_DrawList_AddText(tdl, tminx + sq + 8, tminy + 5, theme.Text, "GranularWhoosh")
-  r.ImGui_DrawList_AddText(tdl, tminx + sq + 8, tminy + 19, theme.TextDisabled,
-    string.format("%.2fs  ·  %d track%s", state.sel_duration, state.child_count, state.child_count == 1 and "" or "s"))
+  r.ImGui_DrawList_AddText(tdl, tminx + sq + 8, tminy + 8, theme.Text, "GranularWhoosh")
   r.ImGui_Spacing(ctx)
-  r.ImGui_Text(ctx, "Track Name")
-  r.ImGui_SetNextItemWidth(ctx, -1)
-  local _, new_name = r.ImGui_InputText(ctx, '##tempname', state.temp_track_name)
-  state.temp_track_name = new_name
-  r.ImGui_Spacing(ctx)
-  r.ImGui_Text(ctx, "Status:")
-  local msg = state.status_msg or ""
+  local pan_dir = math.abs(state.pan_value) < 0.06 and "—" or (state.pan_value < 0 and "L→R" or "R→L")
+  local pct = math.floor((1 - 2 * state.inset) * 100)
+  local sel_info = string.format("%.2fs · %d track%s", state.sel_duration, state.child_count, state.child_count == 1 and "" or "s")
+  local msg = string.format("Pitch: %+.0f st  Filter: %.0f–%.0f Hz  Pan: %s (%.0f%%)  Duration: %d%%  %s",
+    state.pitch_shift, state.filter_base_freq, state.filter_peak_freq, pan_dir, math.abs(state.pan_value) * 100, pct, sel_info)
   local status_col = 0x888899FF
-  if msg:find("Error") then
+  if state.status_msg and (state.status_msg:find("Error") or state.status_msg:find("Generating")) then
     status_col = 0xCC4444FF
-  elseif msg:find("Done") or msg:find("Rendered") or msg:find("Resampled") then
-    status_col = 0x442D8C6D
   end
   r.ImGui_TextColored(ctx, status_col, msg)
 end
@@ -1498,226 +1628,7 @@ end
 
 local function panel_visualizer()
   section_header("Woosh")
-
-  -- Duration dual-knob slider (mirrored at center, controls grain window compression)
-  local dur_w = r.ImGui_GetContentRegionAvail(ctx)
-  local dur_h = 22
-  r.ImGui_InvisibleButton(ctx, '##duration', dur_w, dur_h)
-  local dur_minx, dur_miny = r.ImGui_GetItemRectMin(ctx)
-  local dur_dl = r.ImGui_GetWindowDrawList(ctx)
-  local dur_mx, dur_my = r.ImGui_GetMousePos(ctx)
-  local dur_active = r.ImGui_IsItemActive(ctx)
-  local dur_hovered = r.ImGui_IsItemHovered(ctx)
-  local MAX_COMPRESS = 0.30
-
-  local left_x = dur_minx + state.inset * dur_w
-  local right_x = dur_minx + (1 - state.inset) * dur_w
-  local dur_cy = dur_miny + dur_h * 0.5
-
-  r.ImGui_DrawList_AddRectFilled(dur_dl, dur_minx, dur_miny, dur_minx + dur_w, dur_miny + dur_h, 0xFF1A1A1A, 4)
-  r.ImGui_DrawList_AddRect(dur_dl, dur_minx, dur_miny, dur_minx + dur_w, dur_miny + dur_h, 0xFF444444, 4)
-  r.ImGui_DrawList_AddRectFilled(dur_dl, left_x, dur_miny, right_x, dur_miny + dur_h, 0x222D8C6D, 4)
-
-  r.ImGui_DrawList_AddText(dur_dl, dur_minx + 6, dur_miny + 3, theme.TextDisabled, "Duration")
-
-  if dur_active then
-    local t = math.max(0, math.min(1, (dur_mx - dur_minx) / dur_w))
-    local new_inset = math.min(t, 1 - t)
-    state.inset = math.max(0, math.min(MAX_COMPRESS, new_inset))
-    left_x = dur_minx + state.inset * dur_w
-    right_x = dur_minx + (1 - state.inset) * dur_w
-  end
-
-  local active_pct = math.floor((1 - 2 * state.inset) * 100)
-  local pct_str = active_pct .. "%"
-  local pct_w = r.ImGui_CalcTextSize(ctx, pct_str)
-  local pct_col = active_pct > 60 and 0xCCCCCCFF or (active_pct > 30 and 0xCCCC66FF or 0xCC6644FF)
-  r.ImGui_DrawList_AddText(dur_dl, dur_minx + dur_w - pct_w - 6, dur_miny + 3, pct_col, pct_str)
-
-  local knob_r = 6
-  r.ImGui_DrawList_AddCircleFilled(dur_dl, left_x, dur_cy, knob_r + 2, 0x332D8C6D)
-  r.ImGui_DrawList_AddCircleFilled(dur_dl, left_x, dur_cy, knob_r, theme.SliderGrab)
-  r.ImGui_DrawList_AddCircleFilled(dur_dl, right_x, dur_cy, knob_r + 2, 0x332D8C6D)
-  r.ImGui_DrawList_AddCircleFilled(dur_dl, right_x, dur_cy, knob_r, theme.SliderGrab)
-
-  if dur_hovered or dur_active then
-    show_tooltip("Controls the active duration of the grain window.\nBoth edges compress symmetrically toward the center,\ngiving the envelope more room for attack/release.")
-  end
-  r.ImGui_Spacing(ctx)
-
-  -- Pitch vertical slider on the left of the visualizer
-  r.ImGui_SetNextItemWidth(ctx, 20)
-  local _, new_pitch = r.ImGui_VSliderDouble(ctx, '##pitch', 20, 160, state.pitch_shift, -12, 12, "%.0f")
-  if r.ImGui_IsItemHovered(ctx) and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
-    state.pitch_shift = 0.0
-  end
-  if r.ImGui_IsItemHovered(ctx) then
-    show_tooltip("Pitch shift at the peak (semitones).\n+ = approach (up then down)\n- = recede (down then up)\n0 = no pitch envelope.\nDouble-click to reset.")
-  end
-  state.pitch_shift = new_pitch
-  r.ImGui_SameLine(ctx)
-
-  draw_preview(24)
-  r.ImGui_SameLine(ctx)
-
-  -- Dual-knob filter slider on the right of the visualizer
-  local fslider_w = 20
-  local fslider_h = 160
-  r.ImGui_InvisibleButton(ctx, '##filter_slider', fslider_w, fslider_h)
-  local fs_cx, fs_cy = r.ImGui_GetItemRectMin(ctx)
-  local fs_dl = r.ImGui_GetWindowDrawList(ctx)
-  local fs_mx, fs_my = r.ImGui_GetMousePos(ctx)
-  local fs_active = r.ImGui_IsItemActive(ctx)
-  local fs_hovered = r.ImGui_IsItemHovered(ctx)
-
-  -- Track (background)
-  r.ImGui_DrawList_AddRectFilled(fs_dl, fs_cx + 6, fs_cy, fs_cx + 14, fs_cy + fslider_h, 0xFF1A1A1A, 3)
-  r.ImGui_DrawList_AddRect(fs_dl, fs_cx + 6, fs_cy, fs_cx + 14, fs_cy + fslider_h, 0xFF444444, 3)
-
-  -- Frequency range is logarithmic: 20Hz..20000Hz
-  local function hz_to_y(hz)
-    local n = math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
-    return fs_cy + fslider_h - n * fslider_h
-  end
-  local function y_to_hz(y)
-    local n = math.max(0.0, math.min(1.0, (fs_cy + fslider_h - y) / fslider_h))
-    return 20.0 * (24000.0 / 20.0) ^ n
-  end
-
-  local top_knob_y = hz_to_y(state.filter_peak_freq)
-  local bot_knob_y = hz_to_y(state.filter_base_freq)
-
-  -- Fill between knobs (active filter range)
-  r.ImGui_DrawList_AddRectFilled(fs_dl, fs_cx + 7, top_knob_y, fs_cx + 13, bot_knob_y, 0x442D8C6D, 2)
-
-  -- Determine which knob to drag
-  local mouse_clicked = r.ImGui_IsMouseClicked(ctx, 0)
-  local mouse_down = r.ImGui_IsMouseDown(ctx, 0)
-  local dist_top = math.abs(fs_my - top_knob_y)
-  local dist_bot = math.abs(fs_my - bot_knob_y)
-
-  if mouse_clicked and (fs_active or fs_hovered) then
-    if dist_top < dist_bot and dist_top < 12 then
-      filter_top_dragging = true
-    elseif dist_bot < 12 then
-      filter_bottom_dragging = true
-    end
-  end
-  if not mouse_down then
-    filter_top_dragging = false
-    filter_bottom_dragging = false
-  end
-
-  -- Min gap between knobs (in Hz) to prevent overlap
-  local min_hz_gap = 100.0
-
-  if filter_top_dragging then
-    local new_y = math.max(fs_cy, math.min(bot_knob_y - 4, fs_my))
-    local new_hz = y_to_hz(new_y)
-    new_hz = math.max(state.filter_base_freq + min_hz_gap, math.min(20000.0, new_hz))
-    state.filter_peak_freq = new_hz
-  end
-  if filter_bottom_dragging then
-    local new_y = math.min(fs_cy + fslider_h, math.max(top_knob_y + 4, fs_my))
-    local new_hz = y_to_hz(new_y)
-    new_hz = math.min(state.filter_peak_freq - min_hz_gap, math.max(20.0, new_hz))
-    state.filter_base_freq = new_hz
-  end
-
-  -- Recompute knob positions after drag
-  top_knob_y = hz_to_y(state.filter_peak_freq)
-  bot_knob_y = hz_to_y(state.filter_base_freq)
-
-  -- Draw knobs (top = bright green, bottom = dim green)
-  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, top_knob_y, 7, 0xFF2D8C6D)
-  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, top_knob_y, 4, 0xFF33A07C)
-  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, bot_knob_y, 7, 0xFF1A5C4A)
-  r.ImGui_DrawList_AddCircleFilled(fs_dl, fs_cx + 10, bot_knob_y, 4, 0xFF22705A)
-
-  if fs_hovered or filter_top_dragging or filter_bottom_dragging then
-    local filter_off_now =
-      state.filter_peak_freq >= 20000.0 and
-      state.filter_base_freq >= state.filter_peak_freq - 100.5
-    local tip = string.format("Peak: %.0f Hz\nBase: %.0f Hz", state.filter_peak_freq, state.filter_base_freq)
-    if filter_off_now then
-      tip = tip .. "\n(both knobs at max -- EQ doppler bypassed)"
-    end
-    show_tooltip(tip)
-  end
-
-  -- ── CUSTOM PAN KNOB ──
-  -- oOo at center (deadzone snap), >>> on left, <<< on right
-  r.ImGui_Dummy(ctx, 0, 2)
-  local pan_w = r.ImGui_GetContentRegionAvail(ctx)
-  local pan_h = 22
-  r.ImGui_InvisibleButton(ctx, '##pan', pan_w, pan_h)
-  local pan_minx, pan_miny = r.ImGui_GetItemRectMin(ctx)
-  local pan_dl = r.ImGui_GetWindowDrawList(ctx)
-  local pan_mx, pan_my = r.ImGui_GetMousePos(ctx)
-  local pan_active = r.ImGui_IsItemActive(ctx)
-  local pan_hovered = r.ImGui_IsItemHovered(ctx)
-
-  -- Track background
-  r.ImGui_DrawList_AddRectFilled(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF1A1A1A, 4)
-  r.ImGui_DrawList_AddRect(pan_dl, pan_minx, pan_miny, pan_minx + pan_w, pan_miny + pan_h, 0xFF444444, 4)
-
-  -- Direction labels inside the slider
-  r.ImGui_DrawList_AddText(pan_dl, pan_minx + 6, pan_miny + 3, theme.TextDisabled, "Left to Right")
-  local rtl_w = r.ImGui_CalcTextSize(ctx, "Right to Left")
-  r.ImGui_DrawList_AddText(pan_dl, pan_minx + pan_w - rtl_w - 6, pan_miny + 3, theme.TextDisabled, "Right to Left")
-
-  local pan_cx = pan_minx + pan_w * 0.5
-  local pan_cy = pan_miny + pan_h * 0.5
-  -- Center tick marks the neutral position
-  r.ImGui_DrawList_AddLine(pan_dl, pan_cx, pan_miny + 3, pan_cx, pan_miny + pan_h - 3, 0x66444444, 1)
-
-  -- Dead zone around center: values within this band snap to 0
-  local pan_dead = 0.06
-
-  -- Drag to set value; value spans -1..+1 across the track width
-  if pan_active and r.ImGui_IsMouseDown(ctx, 0) then
-    local t = math.max(0.0, math.min(1.0, (pan_mx - pan_minx) / pan_w))
-    local raw = t * 2.0 - 1.0
-    if math.abs(raw) < pan_dead then
-      state.pan_value = 0.0
-    else
-      state.pan_value = raw
-    end
-  end
-  if pan_hovered and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
-    state.pan_value = 0.0
-  end
-
-  -- Knob position from current value
-  local knob_x = pan_minx + (state.pan_value + 1.0) * 0.5 * pan_w
-
-  -- In the dead zone the knob becomes oOo: a head (large circle) with two ears (small circles)
-  if math.abs(state.pan_value) < pan_dead then
-    local ear_r = 2.2
-    local head_r = 4.6
-    local ear_dx = head_r + ear_r - 0.5
-    r.ImGui_DrawList_AddCircleFilled(pan_dl, knob_x - ear_dx, pan_cy, ear_r, theme.SliderGrab)
-    r.ImGui_DrawList_AddCircleFilled(pan_dl, knob_x,          pan_cy, head_r, theme.SliderGrab)
-    r.ImGui_DrawList_AddCircleFilled(pan_dl, knob_x + ear_dx, pan_cy, ear_r, theme.SliderGrab)
-  else
-    -- Three triangles: >>> when on left half, <<< when on right half
-    local s = 5.5
-    local dx = s * 1.7
-    local pointing_right = state.pan_value <= 0.0
-    for i = -1, 1 do
-      local tcx = knob_x + i * dx
-      if pointing_right then
-        r.ImGui_DrawList_AddTriangleFilled(pan_dl, tcx + s, pan_cy, tcx - s, pan_cy - s, tcx - s, pan_cy + s, theme.SliderGrab)
-      else
-        r.ImGui_DrawList_AddTriangleFilled(pan_dl, tcx - s, pan_cy, tcx + s, pan_cy - s, tcx + s, pan_cy + s, theme.SliderGrab)
-      end
-    end
-  end
-
-  if pan_hovered or pan_active then
-    show_tooltip("Center = no pan sweep.\nLeft = L->R sweep.\nRight = R->L sweep.\nEdges = 100% strength.\nDouble-click to reset.")
-  end
-
+  draw_preview()
   r.ImGui_Spacing(ctx)
 
   if r.ImGui_BeginTable(ctx, "VolEnvLayout", 2, r.ImGui_TableFlags_SizingStretchSame()) then
