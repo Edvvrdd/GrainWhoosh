@@ -186,6 +186,7 @@ local state = {
 local _track_cache = { track = nil, time = 0 }
 local _fx_cache = {}
 local DRAW_SEGMENTS = 24
+local show_options = false
 
 ---------------------------------------------------------------------
 -- UI Helper Functions
@@ -250,31 +251,18 @@ function xy_pad(label, val_x, min_x, max_x, val_y, min_y, max_y, fmt_x, fmt_y, t
   r.ImGui_DrawList_AddText(dl, cx + pad - 40, cy + 2, 0xFF888899,
     string.format(fmt_y, val_y))
 
-  -- ── AXIS LABELS ──
-  -- X axis label ("Density") centered below the pad
-  if label_x then
-    local txt_w = r.ImGui_CalcTextSize(ctx, label_x)
-    r.ImGui_DrawList_AddText(dl, cx + (pad - txt_w) * 0.5, cy + H + 3, theme.TextDisabled, label_x)
-  end
-
-  -- Y axis label ("Size") drawn vertically along the left side
+  -- Axis labels inside the pad corners
   if label_y then
-    local chars = {}
-    for c in label_y:gmatch(".") do chars[#chars+1] = c end
-    local char_h = r.ImGui_GetTextLineHeight(ctx)
-    local total_h = #chars * char_h
-    local start_y = cy + (H - total_h) * 0.5
-    for i, c in ipairs(chars) do
-      r.ImGui_DrawList_AddText(dl, cx - label_margin + 2, start_y + (i - 1) * char_h, theme.TextDisabled, c)
-    end
+    r.ImGui_DrawList_AddText(dl, cx + 4, cy + 4, theme.TextDisabled, label_y)
+  end
+  if label_x then
+    local x_txt_w = r.ImGui_CalcTextSize(ctx, label_x)
+    r.ImGui_DrawList_AddText(dl, cx + pad - x_txt_w - 4, cy + H - 14, theme.TextDisabled, label_x)
   end
 
   if tooltip and (hovered or active) then
     show_tooltip(tooltip)
   end
-
-  -- Reserve space below for the X axis label
-  r.ImGui_Dummy(ctx, 1, 16)
 
   return val_x, val_y, active
 end
@@ -1510,20 +1498,43 @@ local function panel_identity()
   local tminx, tminy = r.ImGui_GetItemRectMin(ctx)
   local tdl = r.ImGui_GetWindowDrawList(ctx)
   local sq = tb_h - 4
-  r.ImGui_DrawList_AddRectFilled(tdl, tminx, tminy, tminx + sq, tminy + sq, theme.Button, 4)
-  r.ImGui_DrawList_AddRectFilled(tdl, tminx + 6, tminy + 6, tminx + sq - 6, tminy + sq - 6, theme.SliderGrab, 3)
-  r.ImGui_DrawList_AddText(tdl, tminx + sq + 8, tminy + 8, theme.Text, "GranularWhoosh")
+  local gap = 3
+  local x = tminx
+  for _, sz in ipairs({16, 24, sq}) do
+    local iy = tminy + (tb_h - sz) * 0.5
+    r.ImGui_DrawList_AddRectFilled(tdl, x, iy, x + sz, iy + sz, theme.Button, 4)
+    r.ImGui_DrawList_AddRectFilled(tdl, x + 4, iy + 4, x + sz - 4, iy + sz - 4, theme.SliderGrab, 3)
+    x = x + sz + gap
+  end
+  local tx = x + 4
+  r.ImGui_DrawList_AddText(tdl, tx, tminy + 8, theme.Text, "GranularWhoosh")
+  x = tx + r.ImGui_CalcTextSize(ctx, "GranularWhoosh") + 8
+  for _, sz in ipairs({sq, 24, 16}) do
+    local iy = tminy + (tb_h - sz) * 0.5
+    r.ImGui_DrawList_AddRectFilled(tdl, x, iy, x + sz, iy + sz, theme.Button, 4)
+    r.ImGui_DrawList_AddRectFilled(tdl, x + 4, iy + 4, x + sz - 4, iy + sz - 4, theme.SliderGrab, 3)
+    x = x + sz + gap
+  end
   r.ImGui_Spacing(ctx)
   local pan_dir = math.abs(state.pan_value) < 0.06 and "—" or (state.pan_value < 0 and "L→R" or "R→L")
   local pct = math.floor((1 - 2 * state.inset) * 100)
-  local sel_info = string.format("%.2fs · %d track%s", state.sel_duration, state.child_count, state.child_count == 1 and "" or "s")
-  local msg = string.format("Pitch: %+.0f st  Filter: %.0f–%.0f Hz  Pan: %s (%.0f%%)  Duration: %d%%  %s",
-    state.pitch_shift, state.filter_base_freq, state.filter_peak_freq, pan_dir, math.abs(state.pan_value) * 100, pct, sel_info)
   local status_col = 0x888899FF
   if state.status_msg and (state.status_msg:find("Error") or state.status_msg:find("Generating")) then
     status_col = 0xCC4444FF
   end
-  r.ImGui_TextColored(ctx, status_col, msg)
+  if r.ImGui_BeginTable(ctx, "StatusGrid", 2, r.ImGui_TableFlags_SizingStretchProp()) then
+    r.ImGui_TableNextRow(ctx)
+    r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Pitch: %+.0f st", state.pitch_shift))
+    r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Filter: %.0f–%.0f Hz", state.filter_base_freq, state.filter_peak_freq))
+    r.ImGui_TableNextRow(ctx)
+    r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Pan: %s (%d%%)", pan_dir, math.floor(math.abs(state.pan_value) * 100)))
+    r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Inset: %d%%", pct))
+    r.ImGui_TableNextRow(ctx)
+    r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Duration: %.2fs", state.sel_duration))
+    r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Layers: %d", state.child_count))
+    r.ImGui_EndTable(ctx)
+  end
+  if r.ImGui_Button(ctx, "Options", -1, 0) then show_options = not show_options end
 end
 
 local function panel_sampling()
@@ -1736,6 +1747,17 @@ function loop()
 
   -- Pop the main window's theme AFTER End so it covered Begin→End.
   pop_theme()
+
+  if show_options then
+    push_theme()
+    local opt_vis, opt_open = r.ImGui_Begin(ctx, "GranularWhoosh Options", true, r.ImGui_WindowFlags_AlwaysAutoResize())
+    if opt_vis then
+      r.ImGui_Text(ctx, "Options coming soon")
+      r.ImGui_End(ctx)
+    end
+    pop_theme()
+    if not opt_open then show_options = false end
+  end
 
   -- Track real window visibility. `open` only flips false on the floating
   -- close (X) button; a docked window whose tab is dismissed (or any hidden
