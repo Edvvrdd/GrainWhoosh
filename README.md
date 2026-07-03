@@ -3,7 +3,6 @@
 A granular sound design tool built directly into REAPER. Unlike traditional sealed instruments or rigid sample libraries, GranularWhoosh turns your entire session into the granular engine. It features a uniquely flexible workflow where every processing stage is fully editable on the timeline — you can tweak volume, pan, pitch, and filter envelopes post-generation, and even recursively re-granulate your output with a single click.
 
 
-
 ## Requirements
 
 - REAPER 6.x or newer
@@ -50,8 +49,6 @@ A granular sound design tool built directly into REAPER. Unlike traditional seal
 - **Sampling Direction** — how sources are ordered: Forward, Reverse, Ping-Pong, or Random
 - **Inset** — shrinks the grain placement window inside the time selection, giving silent margins at each end
 
-### Volume Envelope section
-
 A live preview shows the exact bezier curve that will be written to the temp track's volume envelope.
 
 - **Peak Position** — where in the whoosh the loudest moment sits (0 = start, 1 = end)
@@ -60,6 +57,7 @@ A live preview shows the exact bezier curve that will be written to the temp tra
 - **Fall Tension** — same for the release side
 - **Front Spill** — extends the envelope start before the time selection (seconds)
 - **Back Spill** — extends the envelope end after the time selection (seconds)
+- **Min Volume Floor** — set in Options (−60 dB to −20 dB). Controls the volume floor at envelope edges. −60 ≈ total silence, −20 dB leaves audible texture. Default: −30 dB.
 
 ### Doppler section
 
@@ -67,10 +65,13 @@ Toggles pitch, filter, and pan envelopes that simulate a moving sound source. Al
 
 **Pitch**
 - **Intensity** — signed slider (0–±12 semitones). Positive = up-then-down (approach), negative = down-then-up (recede), zero = disabled
+- **Mode** — selectable in Options: **Shift Full** (±24 st range), **Shift Semitones** (±12 st), **Shift Cents** (±100 cent range for subtle shifts), **Formant Full** (formant-preserving shift at ±24 st range)
 
 **Filter**
-- **Base Freq** — lowpass filter frequency at the edges of the whoosh (20–2000 Hz)
-- **Peak Freq** — lowpass filter frequency at the peak (1000–20000 Hz)
+- **Base Freq** — filter frequency at the edges of the whoosh (20–2000 Hz)
+- **Peak Freq** — filter frequency at the peak (1000–20000 Hz)
+- **Type** — selectable in Options: **Low Pass** or **High Pass**
+- Filter is automatically bypassed when both knobs sit at their maximum or minimum positions (no audible sweep)
 
 **Pan**
 - **Strength / Direction** — signed slider: center = no sweep, negative = L→R sweep, positive = R→L sweep. Magnitude controls offset strength
