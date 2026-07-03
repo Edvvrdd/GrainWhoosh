@@ -43,11 +43,11 @@ local theme = {
   TextDisabled    = 0x888888FF,
   Button          = 0x202020FF,
   ButtonHovered   = 0x333333FF,
-  ButtonActive    = 0x2D8C6DFF,
-  SliderGrab      = 0x2D8C6DFF,
-  CheckMark       = 0x2D8C6DFF,
+  ButtonActive    = 0x2D6D8CFF,
+  SliderGrab      = 0x2D6D8CFF,
+  CheckMark       = 0x2D6D8CFF,
   Header          = 0x202020FF,
-  HeaderHovered   = 0x2D8C6DFF,
+  HeaderHovered   = 0x2D6D8CFF,
   FrameBg         = 0x00000060,
   FrameBgHovered  = 0x00000080,
   WindowRounding  = 6,
@@ -188,6 +188,8 @@ local _fx_cache = {}
 local DRAW_SEGMENTS = 24
 local show_options = false
 
+local viz_h = 200  -- shared fixed height for XY pad and visualizer
+
 ---------------------------------------------------------------------
 -- UI Helper Functions
 ---------------------------------------------------------------------
@@ -196,7 +198,7 @@ function xy_pad(label, val_x, min_x, max_x, val_y, min_y, max_y, fmt_x, fmt_y, t
   local label_margin = 18  -- space for axis labels
   local pad = math.min(avail - label_margin - 4, 235)
   if pad < 80 then pad = 80 end
-  local H = pad
+  local H = viz_h
   local dl = r.ImGui_GetWindowDrawList(ctx)
 
   -- Center the pad + label margin within the available width
@@ -237,12 +239,12 @@ function xy_pad(label, val_x, min_x, max_x, val_y, min_y, max_y, fmt_x, fmt_y, t
   local hy = cy + (1.0 - (val_y - min_y) / (max_y - min_y)) * H
 
   -- Crosshair
-  r.ImGui_DrawList_AddLine(dl, cx, hy, cx + pad, hy, 0x442D8C6D, 1.0)
-  r.ImGui_DrawList_AddLine(dl, hx, cy, hx, cy + H, 0x442D8C6D, 1.0)
+  r.ImGui_DrawList_AddLine(dl, cx, hy, cx + pad, hy, 0x442D6D8C, 1.0)
+  r.ImGui_DrawList_AddLine(dl, hx, cy, hx, cy + H, 0x442D6D8C, 1.0)
 
   -- Handle (glow + dot)
-  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 8, 0x332D8C6D)
-  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 5, 0xCC2D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 8, 0x332D6D8C)
+  r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 5, 0xCC2D6D8C)
   r.ImGui_DrawList_AddCircleFilled(dl, hx, hy, 2, 0xFFFFFFFF)
 
   -- Value readout (small, in corners)
@@ -305,7 +307,7 @@ function draw_preview()
 
   local dl = r.ImGui_GetWindowDrawList(ctx)
   local W = r.ImGui_GetContentRegionAvail(ctx)
-  local H = 200
+  local H = viz_h
 
   -- InvisibleButton captures mouse events so the window isn't dragged
   -- when interacting with the visualizer. All drawing happens via the
@@ -329,12 +331,12 @@ function draw_preview()
   local dur_left = dur_x0 + dur_inset * dur_active_w
   local dur_right = dur_x1 - dur_inset * dur_active_w
 
-  r.ImGui_DrawList_AddRectFilled(dl, dur_left, cy + 5, dur_right, cy + 15, 0x222D8C6D, 2)
+  r.ImGui_DrawList_AddRectFilled(dl, dur_left, cy + 5, dur_right, cy + 15, 0x222D6D8C, 2)
 
   local dk_r = 5
-  r.ImGui_DrawList_AddCircleFilled(dl, dur_left, dur_cy, dk_r + 2, 0x332D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, dur_left, dur_cy, dk_r + 2, 0x332D6D8C)
   r.ImGui_DrawList_AddCircleFilled(dl, dur_left, dur_cy, dk_r, theme.SliderGrab)
-  r.ImGui_DrawList_AddCircleFilled(dl, dur_right, dur_cy, dk_r + 2, 0x332D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, dur_right, dur_cy, dk_r + 2, 0x332D6D8C)
   r.ImGui_DrawList_AddCircleFilled(dl, dur_right, dur_cy, dk_r, theme.SliderGrab)
 
   local dur_hit = my >= cy and my <= cy + 20 and mx >= dur_x0 and mx <= dur_x1
@@ -347,6 +349,9 @@ function draw_preview()
   if dur_dragging then
     local t = math.max(0, math.min(1, (mx - dur_x0) / dur_active_w))
     state.inset = math.max(0, math.min(0.30, math.min(t, 1 - t)))
+  end
+  if dur_hit or dur_dragging then
+    show_tooltip("Trim front/back spill from the time selection.\nDrag left/right. Inner edges define the active region.")
   end
 
   -- ── DURATION SHADING (inset margins) ──
@@ -466,10 +471,10 @@ function draw_preview()
   local filter_base_y = cy + H - hz_to_norm(state.filter_base_freq) * (H - 8) - 4
   local filter_peak_y = cy + H - hz_to_norm(state.filter_peak_freq) * (H - 8) - 4
   if state.filter_peak_freq < 20000.0 then
-    r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0xCC2D8C6D, 1.5)
+    r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0xCC2D6D8C, 1.5)
   end
   if state.filter_base_freq > 20.0 then
-    r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x662D8C6D, 1.0)
+    r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x662D6D8C, 1.0)
   end
 
   -- (Spill lines are drawn after the peak dot — they need its position)
@@ -509,9 +514,12 @@ function draw_preview()
   end
 
   -- Draw the peak dot as an ellipse (gold, glowy)
-  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx + 4, peak_dot_ry + 4, 0x332D8C6D)  -- outer glow
-  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx,     peak_dot_ry,     0xFF2D8C6D)  -- body
+  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx + 4, peak_dot_ry + 4, 0x332D6D8C)  -- outer glow
+  r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx,     peak_dot_ry,     0xFF2D6D8C)  -- body
   r.ImGui_DrawList_AddEllipseFilled(dl, peak_dot_x, peak_dot_y, peak_dot_rx - 4, peak_dot_ry - 4, 0xFF33A07C)  -- highlight
+  if on_dot or peak_dragging then
+    show_tooltip("Peak position and hold time.\nDrag horizontally to move the peak.\nDrag vertically to adjust hold time.\nUp = longer hold, Down = shorter hold.")
+  end
 
   -- Small directional triangles around the dot (up/down only)
   local arr_col = 0xFF33A07C
@@ -532,9 +540,11 @@ function draw_preview()
   -- Sits in the rise region (left edge to peak dot). < points left.
   -- Near peak (right) = sharp (1.0), far from peak (left) = relaxed (-1.0).
   local gap = 20  -- clear space around the peak dot
-  local rise_region_w = (peak_dot_x - peak_dot_rx) - gap - cx
+  local rise_margin = 16  -- keep triangle inside the box
+  local rise_region_x0 = cx + rise_margin
+  local rise_region_w = (peak_dot_x - peak_dot_rx) - gap - rise_region_x0
   -- Position: attack=-1.0 → far left, attack=1.0 → near peak (right)
-  local rise_tri_x = cx + ((1.0 - state.attack) / 2.0) * rise_region_w
+  local rise_tri_x = rise_region_x0 + ((1.0 - state.attack) / 2.0) * rise_region_w
   local rise_tri_y = peak_dot_y
   local rise_tri_s = 8  -- triangle size
   local rise_hit = math.abs(mx - rise_tri_x) < rise_tri_s + 4 and math.abs(my - rise_tri_y) < rise_tri_s + 4
@@ -546,28 +556,33 @@ function draw_preview()
     rise_dragging = false
   end
   if rise_dragging then
-    local new_t = (mx - cx) / rise_region_w
+    local new_t = (mx - rise_region_x0) / rise_region_w
     new_t = math.max(0, math.min(1, new_t))
     -- new_t=0 (left) → 1.0 (sharp), new_t=1 (right, near peak) → -1.0 (relaxed)
     state.attack = 1.0 - (new_t * 2.0)
-    rise_tri_x = cx + ((1.0 - state.attack) / 2.0) * rise_region_w
+    rise_tri_x = rise_region_x0 + ((1.0 - state.attack) / 2.0) * rise_region_w
   end
 
   -- Draw the < triangle (gold, glowy)
   local p1x, p1y = rise_tri_x - rise_tri_s, rise_tri_y           -- left point
   local p2x, p2y = rise_tri_x + rise_tri_s, rise_tri_y - rise_tri_s  -- top right
   local p3x, p3y = rise_tri_x + rise_tri_s, rise_tri_y + rise_tri_s  -- bottom right
-  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0x332D8C6D)  -- glow (bigger)
+  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0x332D6D8C)  -- glow (bigger)
   local gs = rise_tri_s + 3
-  r.ImGui_DrawList_AddTriangleFilled(dl, rise_tri_x - gs, rise_tri_y, rise_tri_x + gs, rise_tri_y - gs, rise_tri_x + gs, rise_tri_y + gs, 0x332D8C6D)
-  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0xFF2D8C6D)  -- body
+  r.ImGui_DrawList_AddTriangleFilled(dl, rise_tri_x - gs, rise_tri_y, rise_tri_x + gs, rise_tri_y - gs, rise_tri_x + gs, rise_tri_y + gs, 0x332D6D8C)
+  r.ImGui_DrawList_AddTriangleFilled(dl, p1x, p1y, p2x, p2y, p3x, p3y, 0xFF2D6D8C)  -- body
   r.ImGui_DrawList_AddTriangleFilled(dl, rise_tri_x - rise_tri_s + 3, rise_tri_y, rise_tri_x + rise_tri_s - 3, rise_tri_y - rise_tri_s + 4, rise_tri_x + rise_tri_s - 3, rise_tri_y + rise_tri_s - 4, 0xFF33A07C)  -- highlight
+  if rise_hit or rise_dragging then
+    show_tooltip("Rise tension (attack curvature).\nDrag left = sharp attack.\nDrag right = gradual attack.")
+  end
 
   -- ── FALL TENSION TRIANGLE (draggable, horizontal only) ──
   -- Sits in the fall region (peak dot to right edge). > points right.
   -- Near peak (left) = sharp (1.0), far from peak (right) = relaxed (-1.0).
+  local fall_margin = 16  -- keep triangle inside the box
   local fall_region_start = peak_dot_x + peak_dot_rx + gap
-  local fall_region_w = (cx + W) - fall_region_start
+  local fall_region_end = cx + W - fall_margin
+  local fall_region_w = fall_region_end - fall_region_start
   -- Position: release=-1.0 → near peak (left), release=1.0 → far right
   local fall_tri_x = fall_region_start + ((state.release + 1.0) / 2.0) * fall_region_w
   local fall_tri_y = peak_dot_y
@@ -593,15 +608,18 @@ function draw_preview()
   local fp2x, fp2y = fall_tri_x - fall_tri_s, fall_tri_y - fall_tri_s  -- top left
   local fp3x, fp3y = fall_tri_x - fall_tri_s, fall_tri_y + fall_tri_s  -- bottom left
   local fgs = fall_tri_s + 3
-  r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fgs, fall_tri_y, fall_tri_x - fgs, fall_tri_y - fgs, fall_tri_x - fgs, fall_tri_y + fgs, 0x332D8C6D)
-  r.ImGui_DrawList_AddTriangleFilled(dl, fp1x, fp1y, fp2x, fp2y, fp3x, fp3y, 0xFF2D8C6D)  -- body
+  r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fgs, fall_tri_y, fall_tri_x - fgs, fall_tri_y - fgs, fall_tri_x - fgs, fall_tri_y + fgs, 0x332D6D8C)
+  r.ImGui_DrawList_AddTriangleFilled(dl, fp1x, fp1y, fp2x, fp2y, fp3x, fp3y, 0xFF2D6D8C)  -- body
   r.ImGui_DrawList_AddTriangleFilled(dl, fall_tri_x + fall_tri_s - 3, fall_tri_y, fall_tri_x - fall_tri_s + 3, fall_tri_y - fall_tri_s + 4, fall_tri_x - fall_tri_s + 3, fall_tri_y + fall_tri_s - 4, 0xFF33A07C)  -- highlight
+  if fall_hit or fall_dragging then
+    show_tooltip("Fall tension (release curvature).\nDrag right = sharp release.\nDrag left = gradual release.")
+  end
 
   -- ── PITCH KNOB (left edge of visualizer) ──
   local p_knob_x = cx + 8
   local p_inset = 5
-  local function p_val_to_y(v) return cy + p_inset + ((v + 12) / 24) * (H - 2 * p_inset) end
-  local function p_y_to_val(y) return math.max(-12, math.min(12, ((y - cy - p_inset) / (H - 2 * p_inset)) * 24 - 12)) end
+  local function p_val_to_y(v) return cy + p_inset + ((12 - v) / 24) * (H - 2 * p_inset) end
+  local function p_y_to_val(y) return math.max(-12, math.min(12, ((cy + H - p_inset - y) / (H - 2 * p_inset)) * 24 - 12)) end
   local p_knob_y = p_val_to_y(state.pitch_shift)
   local p_hit = math.abs(mx - p_knob_x) < 8 and math.abs(my - p_knob_y) < 8
 
@@ -620,7 +638,7 @@ function draw_preview()
     state.pitch_shift = 0.0
   end
 
-  r.ImGui_DrawList_AddCircleFilled(dl, p_knob_x, p_knob_y, p_inset, 0xFF2D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, p_knob_x, p_knob_y, p_inset, 0xFF2D6D8C)
   r.ImGui_DrawList_AddCircleFilled(dl, p_knob_x, p_knob_y, 2, 0xFF33A07C)
 
   if p_hit or pitch_dragging then
@@ -632,8 +650,10 @@ function draw_preview()
   local pan_x1 = cx + W - 16
   local pan_active_w = pan_x1 - pan_x0
   local pan_cy = cy + H - 10
+  local pkx = pan_x0 + (state.pan_value + 1.0) * 0.5 * pan_active_w
 
   local pan_hit = my >= cy + H - 20 and my <= cy + H and mx >= pan_x0 and mx <= pan_x1
+  local pan_knob_hit = math.abs(mx - pkx) < 16 and math.abs(my - pan_cy) < 10
   if mouse_clicked and pan_hit and not dur_dragging and not peak_dragging and not rise_dragging and not fall_dragging and not pitch_dragging then
     pan_dragging = true
   end
@@ -649,7 +669,6 @@ function draw_preview()
     state.pan_value = 0.0
   end
 
-  local pkx = pan_x0 + (state.pan_value + 1.0) * 0.5 * pan_active_w
   if math.abs(state.pan_value) < 0.06 then
     local ear_r = 2.2
     local head_r = 4.6
@@ -671,7 +690,7 @@ function draw_preview()
     end
   end
 
-  if pan_hit or pan_dragging then
+  if pan_knob_hit or pan_dragging then
     show_tooltip("Center = no pan sweep.\nLeft = L->R sweep.\nRight = R->L sweep.\nEdges = 100% strength.\nDouble-click to reset.")
   end
 
@@ -690,7 +709,7 @@ function draw_preview()
   local ft_y = f_hz_to_y(state.filter_peak_freq)
   local fb_y = f_hz_to_y(state.filter_base_freq)
 
-  r.ImGui_DrawList_AddRectFilled(dl, f_knob_x - 2, ft_y, f_knob_x + 2, fb_y, 0x442D8C6D, 1)
+  r.ImGui_DrawList_AddRectFilled(dl, f_knob_x - 2, ft_y, f_knob_x + 2, fb_y, 0x442D6D8C, 1)
 
   local f_dist_top = math.abs(my - ft_y)
   local f_dist_bot = math.abs(my - fb_y)
@@ -709,26 +728,29 @@ function draw_preview()
   end
 
   local min_hz_gap = 100.0
+  local snap_top = 19900.0
   if filter_top_dragging then
-    local new_hz = f_y_to_hz(math.max(cy + f_inset + 1, math.min(fb_y - 4, my)))
+    local new_hz = f_y_to_hz(math.max(cy + f_inset, math.min(fb_y, my)))
     new_hz = math.max(state.filter_base_freq + min_hz_gap, math.min(20000.0, new_hz))
+    if new_hz > snap_top then new_hz = 20000.0 end
     state.filter_peak_freq = new_hz
   end
   if filter_bottom_dragging then
-    local new_hz = f_y_to_hz(math.min(cy + H - f_inset - 1, math.max(ft_y + 4, my)))
+    local new_hz = f_y_to_hz(math.min(cy + H - f_inset, math.max(ft_y, my)))
     new_hz = math.min(state.filter_peak_freq - min_hz_gap, math.max(20.0, new_hz))
+    if new_hz < 20.5 then new_hz = 20.0 end
     state.filter_base_freq = new_hz
   end
 
   ft_y = f_hz_to_y(state.filter_peak_freq)
   fb_y = f_hz_to_y(state.filter_base_freq)
 
-  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, ft_y, f_inset, 0xFF2D8C6D)
+  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, ft_y, f_inset, 0xFF2D6D8C)
   r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, ft_y, 3, 0xFF33A07C)
   r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, fb_y, f_inset, 0xFF1A5C4A)
   r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, fb_y, 3, 0xFF22705A)
 
-  local f_hover = f_dist_top < 8 or f_dist_bot < 8
+  local f_hover = math.abs(mx - f_knob_x) < 10 and (f_dist_top < 8 or f_dist_bot < 8)
   if f_hover or filter_top_dragging or filter_bottom_dragging then
     local filter_off_now = state.filter_peak_freq >= 20000.0 and state.filter_base_freq >= state.filter_peak_freq - 100.5
     local tip = string.format("Peak: %.0f Hz  Base: %.0f Hz", state.filter_peak_freq, state.filter_base_freq)
@@ -1349,13 +1371,13 @@ local function write_doppler_env(env, v_floor, v_peak, v_floor_end, env_start, p
   r.DeleteEnvelopePointRange(env, env_start - 0.001, env_end + 0.001)
   
   if math.abs(peak_start - peak_end) > 0.001 then
-    r.InsertEnvelopePoint(env, env_start,  v_floor,    5,  att, false, false)
+    r.InsertEnvelopePoint(env, env_start,  v_floor,    5, -att, false, false)
     r.InsertEnvelopePoint(env, peak_start, v_peak,     0,  0.0, false, false)
-    r.InsertEnvelopePoint(env, peak_end,   v_peak,     5, -rel, false, false)
+    r.InsertEnvelopePoint(env, peak_end,   v_peak,     5,  rel, false, false)
     r.InsertEnvelopePoint(env, env_end,    v_floor_end, 5,  0.0, false, false)
   else
-    r.InsertEnvelopePoint(env, env_start,  v_floor,    5,  att, false, false)
-    r.InsertEnvelopePoint(env, peak_start, v_peak,     5, -rel, false, false)
+    r.InsertEnvelopePoint(env, env_start,  v_floor,    5, -att, false, false)
+    r.InsertEnvelopePoint(env, peak_start, v_peak,     5,  rel, false, false)
     r.InsertEnvelopePoint(env, env_end,    v_floor_end, 5,  0.0, false, false)
   end
   r.Envelope_SortPoints(env)
@@ -1373,14 +1395,24 @@ function apply_doppler_envelopes(env_start, env_end, anchor_start, anchor_end, a
     if not env_start then return end
   end
 
-  -- Pitch envelope
+  -- Pitch envelope — find the "Pitch Shift" parameter by name (avoids
+  -- VST vs VST3 parameter ordering differences that would map to Wet/Bypass).
   local pitch_idx = get_or_add_fx(temp_track, 'ReaPitch', 'VST: ReaPitch (Cockos)', 'VST3: ReaPitch (Cockos)')
   if pitch_idx >= 0 then
     r.TrackFX_SetEnabled(temp_track, pitch_idx, true)
-    local pitch_env = r.GetFXEnvelope(temp_track, pitch_idx, 0, true)
+    local pitch_param = 0
+    local pcount = r.TrackFX_GetNumParams(temp_track, pitch_idx)
+    for i = 0, pcount - 1 do
+      local _, pname = r.TrackFX_GetParamName(temp_track, pitch_idx, i)
+      if pname and (pname:find("Pitch Shift", 1, true) or pname:find("Semitone", 1, true)) then
+        pitch_param = i
+        break
+      end
+    end
+    local pitch_env = r.GetFXEnvelope(temp_track, pitch_idx, pitch_param, true)
     if pitch_env then
       local st = state.pitch_shift  -- -12..+12
-      local centre = 24 / 48  -- 0 semitones in normalized form
+      local centre = 24 / 48  -- 0 semitones in normalized form (0.5 = 0 semitones)
       local peak_n = (st + 24) / 48  -- signed shift at the peak
 
       local p_start = anchor_start
@@ -1390,25 +1422,24 @@ function apply_doppler_envelopes(env_start, env_end, anchor_start, anchor_end, a
     end
   end
 
-  -- Filter envelope (ReaEQ lowpass)
-  -- Auto-disable: when both filter knobs sit at their maxima (peak at
-  -- 20000 and base pushed up against peak) there is no audible sweep,
-  -- so the EQ doppler is bypassed: ReaEQ is disabled and no envelope is
-  -- written. The condition mirrors the preview's filter_doppler_off.
-  local filter_doppler_off =
+  -- Filter envelope (ReaEQ single-band low-pass)
+  -- Disabled when both knobs are at max (no audible sweep) or both at min.
+  local filter_off_max =
     state.filter_peak_freq >= 20000.0 and
     state.filter_base_freq >= state.filter_peak_freq - 100.5
+  local filter_off_min =
+    state.filter_base_freq <= 20.5 and
+    state.filter_peak_freq <= state.filter_base_freq + 100.5
   local filter_idx = get_or_add_fx(temp_track, 'ReaEQ', 'VST: ReaEQ (Cockos)', 'VST3: ReaEQ (Cockos)')
   if filter_idx >= 0 then
-    if filter_doppler_off then
+    if filter_off_max or filter_off_min then
       r.TrackFX_SetEnabled(temp_track, filter_idx, false)
     else
       r.TrackFX_SetEnabled(temp_track, filter_idx, true)
-      r.TrackFX_SetParam(temp_track, filter_idx, 12, 0.0)
-      r.TrackFX_SetParam(temp_track, filter_idx, 11, 1.0)
-      r.TrackFX_SetParam(temp_track, filter_idx, 15, 0.7)
+      r.TrackFX_SetParam(temp_track, filter_idx, 3, 1.0)  -- Band 1 Type = Low pass
+      r.TrackFX_SetParam(temp_track, filter_idx, 2, 0.7)  -- Band 1 Bandwidth (Q)
 
-      local filter_env = r.GetFXEnvelope(temp_track, filter_idx, 14, true)
+      local filter_env = r.GetFXEnvelope(temp_track, filter_idx, 0, true)  -- Band 1 Frequency
       if filter_env then
         local function hz_to_norm(hz)
           return math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
@@ -1507,8 +1538,11 @@ local function panel_identity()
     x = x + sz + gap
   end
   local tx = x + 4
+  local text_w, text_h = r.ImGui_CalcTextSize(ctx, "GranularWhoosh")
   r.ImGui_DrawList_AddText(tdl, tx, tminy + 8, theme.Text, "GranularWhoosh")
-  x = tx + r.ImGui_CalcTextSize(ctx, "GranularWhoosh") + 8
+  local bp = 4
+  r.ImGui_DrawList_AddRect(tdl, tx - bp, tminy + 4, tx + text_w + bp, tminy + tb_h - 4, theme.SliderGrab, 4)
+  x = tx + text_w + 8
   for _, sz in ipairs({sq, 24, 16}) do
     local iy = tminy + (tb_h - sz) * 0.5
     r.ImGui_DrawList_AddRectFilled(tdl, x, iy, x + sz, iy + sz, theme.Button, 4)
@@ -1541,7 +1575,7 @@ local function panel_sampling()
   section_header("Sampling Mode")
   local half_w = (r.ImGui_GetContentRegionAvail(ctx) - 4) * 0.5
   if state.sampling_mode == 0 then
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D8C6DFF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D6D8CFF)
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
   else
@@ -1550,10 +1584,11 @@ local function panel_sampling()
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x444444FF)
   end
   if r.ImGui_Button(ctx, "Uniform", half_w, 28) then state.sampling_mode = 0 end
+  show_tooltip("Grains cycle through all sources with random offsets.")
   r.ImGui_PopStyleColor(ctx, 3)
   r.ImGui_SameLine(ctx, 0, 4)
   if state.sampling_mode == 1 then
-    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D8C6DFF)
+    r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D6D8CFF)
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
   else
@@ -1562,8 +1597,8 @@ local function panel_sampling()
     r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x444444FF)
   end
   if r.ImGui_Button(ctx, "Sequential", half_w, 28) then state.sampling_mode = 1 end
+  show_tooltip("Each source plays once in order, auto-sized to fit.")
   r.ImGui_PopStyleColor(ctx, 3)
-  show_tooltip("Uniform: grains cycle through all sources with random offsets.\nSequential: each source plays once in order, auto-sized to fit.")
 
   r.ImGui_Spacing(ctx)
   section_header("Sampling Direction")
@@ -1573,7 +1608,7 @@ local function panel_sampling()
       local idx = row * 2 + col + 1
       if col > 0 then r.ImGui_SameLine(ctx, 0, 4) end
       if state.playback_mode == idx then
-        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D8C6DFF)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D6D8CFF)
         r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
         r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
       else
@@ -1600,8 +1635,10 @@ local function panel_output()
   section_header("Utilities")
   if not can_util then r.ImGui_BeginDisabled(ctx) end
   if r.ImGui_Button(ctx, "Resample to Folder", half_w, 28) then do_resample() end
+  show_tooltip("Move the glued item back into the source folder\nto enable recursive granulation.")
   r.ImGui_SameLine(ctx, 0, 4)
   if r.ImGui_Button(ctx, "Envelope Only", half_w, 28) then do_envelope_only() end
+  show_tooltip("Write envelopes to the temp track without any media items.")
   if not can_util then r.ImGui_EndDisabled(ctx) end
   r.ImGui_Spacing(ctx)
 
@@ -1610,17 +1647,21 @@ local function panel_output()
   -- Row 1: Preview (sample grains + write envelopes to temp track)
   if not can_preview then r.ImGui_BeginDisabled(ctx) end
   if r.ImGui_Button(ctx, "Preview Stereo", half_w, 28) then do_generate(false, true) end
+  show_tooltip("Generate grains + envelopes on the temp track without rendering.\nStereo preserves the source pan.\nMono sums to centre.")
   r.ImGui_SameLine(ctx, 0, 4)
   if r.ImGui_Button(ctx, "Preview Mono", half_w, 28) then do_generate(true, true) end
+  show_tooltip("Same as Preview Stereo but all grains are collapsed to mono.")
   if not can_preview then r.ImGui_EndDisabled(ctx) end
   -- Row 2: Generate (bounce temp track + envelopes to a new rendered track)
   if not can_generate then r.ImGui_BeginDisabled(ctx) end
-  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D8C6DFF)
+  r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D6D8CFF)
   r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
   r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
   if r.ImGui_Button(ctx, "Generate Stereo", half_w, 28) then do_render(false) end
+  show_tooltip("Bounce the temp track through FX (ReaPitch, ReaEQ, ReaComp)\nto a new stem track. Stereo output.")
   r.ImGui_SameLine(ctx, 0, 4)
   if r.ImGui_Button(ctx, "Generate Mono", half_w, 28) then do_render(true) end
+  show_tooltip("Same as Generate Stereo but summed to mono.")
   r.ImGui_PopStyleColor(ctx, 3)
   if not can_generate then r.ImGui_EndDisabled(ctx) end
 end
