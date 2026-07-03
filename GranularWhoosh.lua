@@ -166,6 +166,9 @@ local state = {
   
   -- Doppler
   pitch_shift = 0.0,
+  pitch_mode = 2,   -- 0=Full Range, 1=Semitones, 2=Cents, 3=Formant
+  filter_mode = 0,  -- 0=Low Pass, 1=High Pass
+  min_volume_db = -30.0,  -- -60..-20, floor for volume envelope
   filter_base_freq = 200.0,
   filter_peak_freq = 15000.0,
   pan_amount = 1.0,
@@ -839,6 +842,9 @@ function save_settings()
     attack = state.attack,
     release = state.release,
     pitch_shift = state.pitch_shift,
+    pitch_mode = state.pitch_mode,
+    filter_mode = state.filter_mode,
+    min_volume_db = state.min_volume_db,
     filter_base_freq = state.filter_base_freq,
     filter_peak_freq = state.filter_peak_freq,
     pan_amount = state.pan_amount,
@@ -1395,35 +1401,71 @@ function apply_doppler_envelopes(env_start, env_end, anchor_start, anchor_end, a
     if not env_start then return end
   end
 
-  -- Pitch envelope — find the "Pitch Shift" parameter by name (avoids
-  -- VST vs VST3 parameter ordering differences that would map to Wet/Bypass).
+  ----------------------------------------------------------------------
+  -- Helper: find an FX parameter whose name matches any pattern
+  ----------------------------------------------------------------------
+  local function find_fx_param(track, fx_idx, patterns)
+    local count = r.TrackFX_GetNumParams(track, fx_idx)
+    for i = 0, count - 1 do
+      local _, name = r.TrackFX_GetParamName(track, fx_idx, i)
+      if name then
+        local n = name:lower()
+        for _, pat in ipairs(patterns) do
+          if n:find(pat, 1, true) then return i end
+        end
+      end
+    end
+    return -1
+  end
+
+  ----------------------------------------------------------------------
+  -- Pitch envelope (ReaPitch — mode-controlled)
+  ----------------------------------------------------------------------
   local pitch_idx = get_or_add_fx(temp_track, 'ReaPitch', 'VST: ReaPitch (Cockos)', 'VST3: ReaPitch (Cockos)')
   if pitch_idx >= 0 then
     r.TrackFX_SetEnabled(temp_track, pitch_idx, true)
-    local pitch_param = 0
     local pcount = r.TrackFX_GetNumParams(temp_track, pitch_idx)
-    for i = 0, pcount - 1 do
-      local _, pname = r.TrackFX_GetParamName(temp_track, pitch_idx, i)
-      if pname and (pname:find("Pitch Shift", 1, true) or pname:find("Semitone", 1, true)) then
-        pitch_param = i
-        break
-      end
-    end
-    local pitch_env = r.GetFXEnvelope(temp_track, pitch_idx, pitch_param, true)
-    if pitch_env then
-      local st = state.pitch_shift  -- -12..+12
-      local centre = 24 / 48  -- 0 semitones in normalized form (0.5 = 0 semitones)
-      local peak_n = (st + 24) / 48  -- signed shift at the peak
+    local pmode = state.pitch_mode
+    local st = state.pitch_shift  -- -12..+12
+    local p_param, centre, peak_n
 
+    if pmode == 2 then
+      -- Cents: use the cents parameter
+      p_param = find_fx_param(temp_track, pitch_idx, {"cents"})
+      if p_param < 0 then p_param = (pcount > 1) and 1 or 0 end
+      centre = 0.5
+      peak_n = (st + 100) / 200
+    elseif pmode == 0 or pmode == 3 then
+      -- Full Range (0) or Formant Full (3): use the semitone param at 2x range
+      p_param = find_fx_param(temp_track, pitch_idx, {"pitch shift", "semitone", "pitch"})
+      if p_param < 0 then p_param = (pcount > 1) and 1 or 0 end
+      centre = 0.5
+      peak_n = (st + 12) / 24
+      -- For Formant, try to switch the algorithm mode if the param exists
+      if pmode == 3 then
+        local mode_param = find_fx_param(temp_track, pitch_idx, {"mode", "algorithm"})
+        if mode_param >= 0 then r.TrackFX_SetParam(temp_track, pitch_idx, mode_param, 0.2) end
+      end
+    else
+      -- Semitones (1): standard range
+      p_param = find_fx_param(temp_track, pitch_idx, {"pitch shift", "semitone", "pitch"})
+      if p_param < 0 then p_param = (pcount > 1) and 1 or 0 end
+      centre = 0.5
+      peak_n = (st + 24) / 48
+    end
+
+    local pitch_env = r.GetFXEnvelope(temp_track, pitch_idx, p_param, true)
+    if pitch_env then
       local p_start = anchor_start
       local p_end = anchor_end
-
       write_doppler_env(pitch_env, centre, peak_n, centre, env_start, p_start, p_end, env_end, att, rel)
     end
   end
 
-  -- Filter envelope (ReaEQ single-band low-pass)
-  -- Disabled when both knobs are at max (no audible sweep) or both at min.
+  ----------------------------------------------------------------------
+  -- Filter envelope (ReaEQ — single-band low-pass)
+  -- Disabled when both knobs are at max or both at min.
+  ----------------------------------------------------------------------
   local filter_off_max =
     state.filter_peak_freq >= 20000.0 and
     state.filter_base_freq >= state.filter_peak_freq - 100.5
@@ -1436,21 +1478,28 @@ function apply_doppler_envelopes(env_start, env_end, anchor_start, anchor_end, a
       r.TrackFX_SetEnabled(temp_track, filter_idx, false)
     else
       r.TrackFX_SetEnabled(temp_track, filter_idx, true)
-      r.TrackFX_SetParam(temp_track, filter_idx, 3, 1.0)  -- Band 1 Type = Low pass
-      r.TrackFX_SetParam(temp_track, filter_idx, 2, 0.7)  -- Band 1 Bandwidth (Q)
 
-      local filter_env = r.GetFXEnvelope(temp_track, filter_idx, 0, true)  -- Band 1 Frequency
+      local type_param = find_fx_param(temp_track, filter_idx, {"type"})
+      if type_param >= 0 then
+        local type_val = state.filter_mode == 1 and 0.8 or 0.2
+        r.TrackFX_SetParam(temp_track, filter_idx, type_param, type_val)
+      end
+
+      local bw_param = find_fx_param(temp_track, filter_idx, {"bandwidth", " q", "q/"})
+      if bw_param >= 0 then r.TrackFX_SetParam(temp_track, filter_idx, bw_param, 0.7) end
+
+      local freq_param = find_fx_param(temp_track, filter_idx, {"frequency", "freq"})
+      if freq_param < 0 then freq_param = 0 end
+
+      local filter_env = r.GetFXEnvelope(temp_track, filter_idx, freq_param, true)
       if filter_env then
         local function hz_to_norm(hz)
           return math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
         end
-
         local norm_base = hz_to_norm(state.filter_base_freq)
         local norm_peak = hz_to_norm(state.filter_peak_freq)
-
         local f_start = anchor_start
         local f_end = anchor_end
-
         write_doppler_env(filter_env, norm_base, norm_peak, norm_base, env_start, f_start, f_end, env_end, att, rel)
       end
     end
@@ -1497,7 +1546,7 @@ function apply_volume_envelope()
   local env_start, env_end, peak_start, peak_end, att, rel = calc_env_bounds(state.generated_start, state.generated_end)
   if not env_start then r.PreventUIRefresh(-1) return end
 
-  local env_min = r.ScaleToEnvelopeMode(1, 0.0)
+  local env_min = state.min_volume_db <= -59 and r.ScaleToEnvelopeMode(1, 0.0) or r.ScaleToEnvelopeMode(0, state.min_volume_db)
   local env_max = r.ScaleToEnvelopeMode(1, 1.0)
 
   write_doppler_env(vol_env, env_min, env_max, env_min, env_start, peak_start, peak_end, env_end, att, rel)
@@ -1791,9 +1840,62 @@ function loop()
 
   if show_options then
     push_theme()
-    local opt_vis, opt_open = r.ImGui_Begin(ctx, "GranularWhoosh Options", true, r.ImGui_WindowFlags_AlwaysAutoResize())
+    local opt_vis, opt_open = r.ImGui_Begin(ctx, "GranularWhoosh Options##opts", true, r.ImGui_WindowFlags_AlwaysAutoResize())
     if opt_vis then
-      r.ImGui_Text(ctx, "Options coming soon")
+      local pitch_avail = r.ImGui_GetContentRegionAvail(ctx)
+      local pitch_bw = (pitch_avail - 12) * 0.25
+      if pitch_bw < 80 then pitch_bw = 80 end
+      r.ImGui_Text(ctx, "Pitch Mode")
+      local pitch_labels = {"Shift Full", "Shift Semi", "Shift Cents", "Formant Full"}
+      for i, label in ipairs(pitch_labels) do
+        if i > 1 then r.ImGui_SameLine(ctx, 0, 4) end
+        if state.pitch_mode == i - 1 then
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D6D8CFF)
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
+        else
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x202020FF)
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x333333FF)
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x444444FF)
+        end
+        if r.ImGui_Button(ctx, label, pitch_bw, 28) then state.pitch_mode = i - 1 end
+        r.ImGui_PopStyleColor(ctx, 3)
+      end
+
+      r.ImGui_Spacing(ctx)
+      local filter_avail = r.ImGui_GetContentRegionAvail(ctx)
+      local filter_bw = (filter_avail - 4) * 0.5
+      if filter_bw < 80 then filter_bw = 80 end
+      r.ImGui_Text(ctx, "Filter Type")
+      local filter_labels = {"Low Pass", "High Pass"}
+      for i, label in ipairs(filter_labels) do
+        if i > 1 then r.ImGui_SameLine(ctx, 0, 4) end
+        if state.filter_mode == i - 1 then
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D6D8CFF)
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
+        else
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x202020FF)
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x333333FF)
+          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x444444FF)
+        end
+        if r.ImGui_Button(ctx, label, filter_bw, 28) then state.filter_mode = i - 1 end
+        r.ImGui_PopStyleColor(ctx, 3)
+      end
+
+      r.ImGui_Spacing(ctx)
+      r.ImGui_Text(ctx, "Min Volume Floor")
+      local min_db = state.min_volume_db
+      local changed, new_db = r.ImGui_SliderDouble(ctx, "##minvol", min_db, -60.0, -20.0, "%.0f dB")
+      if changed then state.min_volume_db = new_db end
+      if r.ImGui_IsItemHovered(ctx) then
+        r.ImGui_BeginTooltip(ctx)
+        r.ImGui_PushTextWrapPos(ctx, r.ImGui_GetFontSize(ctx) * 35.0)
+        local tip = string.format("Volume envelope floor: %.0f dB below peak.\nLower values = more silence at envelope edges.\n-60 ≈ silent.", new_db or min_db)
+        r.ImGui_Text(ctx, tip)
+        r.ImGui_PopTextWrapPos(ctx)
+        r.ImGui_EndTooltip(ctx)
+      end
       r.ImGui_End(ctx)
     end
     pop_theme()
