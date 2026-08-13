@@ -121,23 +121,7 @@ local function seed_random()
   math.random()  -- discard first value (poorly distributed in many Lua builds)
 end
 
-local grain_vis_data = {}
-
-local function regen_grain_vis_data()
-  grain_vis_data = {}
-  for i = 1, 200 do
-    local xf = math.random()
-    table.insert(grain_vis_data, {
-      x_frac = xf,
-      h_frac = 0.2 + math.random() * 0.8,
-      phase_offs = math.random() * 6.28,
-      edge = xf < 0.15 or xf > 0.85,
-    })
-  end
-end
-
 seed_random()
-regen_grain_vis_data()
 
 -- Initial State
 local state = {
@@ -145,7 +129,8 @@ local state = {
   sampling_mode = 0, -- 0 = Uniform, 1 = Sequential
   grain_size = 80.0,   -- Uniform: 10-500ms grain length
   grain_density = 60.0,   -- 0-100 percentage (maps to density/crossfade)
-  randomness = 0.0,
+  grain_pitch_rand = 0.0, -- 0..20 (% playback-rate variation per grain, Uniform)
+  grain_vol_rand = 0.0,   -- 0..15 (% volume variation per grain, Uniform)
   playback_mode = 1, -- 1-based index for combo
   inset = 0.0,         -- 0..0.30 — compresses grain window from each side
 
@@ -167,10 +152,8 @@ local state = {
   -- Doppler
   pitch_shift = 0.0,
   pitch_mode = 2,   -- 0=Full Range, 1=Semitones, 2=Cents, 3=Formant
-  filter_mode = 0,  -- 0=Low Pass, 1=High Pass
   min_volume_db = -30.0,  -- -60..-20, floor for volume envelope
-  filter_base_freq = 200.0,
-  filter_peak_freq = 15000.0,
+  filter_intensity = 0.5, -- 0..1 high-pass sweep depth (0 = bypassed)
   pan_amount = 1.0,
   pan_value = 0.0,  -- -1 (L→R) .. 0 (off) .. +1 (R→L)
   enable_doppler = true,
@@ -184,6 +167,11 @@ local state = {
   is_generating = false,
   has_generated_item = false
 }
+
+-- Filter intensity (0..1) → high-pass edge cutoff in Hz (20 Hz .. 2 kHz, log)
+local function filter_edge_hz(i)
+  return 20.0 * (100.0 ^ math.max(0.0, math.min(1.0, i)))
+end
 
 -- Caches
 local _track_cache = { track = nil, time = 0 }
@@ -293,21 +281,17 @@ function labeled_combo(label, idx, items, tooltip)
   return idx
 end
 
-local preview_frame = 0
 local peak_dragging = false  -- tracks whether the peak position dot is being dragged
 local peak_drag_start_my = 0  -- mouse Y at drag start
 local peak_drag_start_hold = 0  -- hold_time at drag start
 local rise_dragging = false  -- tracks whether the rise tension triangle is being dragged
 local fall_dragging = false  -- tracks whether the fall tension triangle is being dragged
-local filter_top_dragging = false    -- filter peak knob (top)
-local filter_bottom_dragging = false -- filter base knob (bottom)
+local filter_dragging = false     -- filter intensity knob (right edge)
 local pitch_dragging = false
 local dur_dragging = false
 local pan_dragging = false
 
 function draw_preview()
-  preview_frame = preview_frame + 1
-
   local dl = r.ImGui_GetWindowDrawList(ctx)
   local W = r.ImGui_GetContentRegionAvail(ctx)
   local H = viz_h
@@ -343,7 +327,7 @@ function draw_preview()
   r.ImGui_DrawList_AddCircleFilled(dl, dur_right, dur_cy, dk_r, theme.SliderGrab)
 
   local dur_hit = my >= cy and my <= cy + 20 and mx >= dur_x0 and mx <= dur_x1
-  if mouse_clicked and dur_hit and not peak_dragging and not rise_dragging and not fall_dragging and not pitch_dragging and not filter_top_dragging and not filter_bottom_dragging then
+  if mouse_clicked and dur_hit and not peak_dragging and not rise_dragging and not fall_dragging and not pitch_dragging and not filter_dragging then
     dur_dragging = true
   end
   if not mouse_down then
@@ -408,45 +392,52 @@ function draw_preview()
     end
   end
 
-  -- ── GRAIN DOTS ──
-  -- Dots whose vertical spread follows the volume envelope.
-  -- At env=0 (edges) dots cluster at the horizontal middle.
-  -- At env=1 (peak) dots expand to fill top and bottom.
+  -- ── DIAMOND BODY ──
+  -- Silhouette built by mirroring the volume envelope around the midline:
+  -- top edge = +vol_fn, bottom edge = -vol_fn. Responds to peak position,
+  -- hold time, rise/fall tension, and inset.
   r.ImGui_DrawList_PushClipRect(dl, cx, cy, cx + W, cy + H, true)
-  local density_norm = state.grain_density / 100
-  local num_grains = math.floor(30 + (170 * density_norm))
-  local rx = 7.5 + ((state.grain_size - 10) / 490) * 67.5
-  local ry = 7.5
   local cy_mid = cy + H * 0.5
-  local vspread = H * 0.5 - ry  -- max vertical offset so dots touch edges exactly
+  -- Reserve vertical space so the body clears the duration strip (top ~20px)
+  -- and the pan strip (bottom ~20px)
+  local half_h = H * 0.5 - 24
 
-  local base_r, base_g, base_b = 0x44, 0x88, 0xCC
-  local dot_col = (base_r << 24) | (base_g << 16) | (base_b << 8) | 0xCC
-  local pan_mag = math.abs(state.pan_value)
-  local shift_col = dot_col
-  if pan_mag > 0.06 then
-    local t = (pan_mag - 0.06) / 0.94
-    local r = math.floor(base_r + (0x88 - base_r) * t)
-    local g = math.floor(base_g + (0x33 - base_g) * t)
-    local b = math.floor(base_b + (0x44 - base_b) * t)
-    shift_col = (r << 24) | (g << 16) | (b << 8) | 0xCC
+  local fill_col = 0x4488CC38
+  local line_col = 0x4488CCCC
+
+  -- Sample the envelope across the active (inset-trimmed) window
+  local SEG = 64
+  local top_pts, bot_pts = {}, {}
+  for i = 0, SEG do
+    local t = i / SEG
+    local v = math.max(0, math.min(1, vol_fn(t)))
+    local x = cx + margin_w + t * active_w
+    top_pts[#top_pts + 1] = x
+    top_pts[#top_pts + 1] = cy_mid - v * half_h
+    bot_pts[#bot_pts + 1] = x
+    bot_pts[#bot_pts + 1] = cy_mid + v * half_h
   end
-  for i = 1, num_grains do
-    local g = grain_vis_data[i]
-    local x = cx + margin_w + (g.x_frac * active_w)
-    if x - rx >= cx and x + rx <= cx + W then
-      local env = math.max(0, math.min(1, vol_fn(g.x_frac)))
-      local y = cy_mid + (g.h_frac - 0.5) * 2.0 * vspread * env
-      if y - ry >= cy and y + ry <= cy + H then
-        local phase = (preview_frame * 0.05 + g.phase_offs) % 6.28
-        local fade = 0.1 + 0.9 * (0.5 + 0.5 * math.sin(phase))
-        local dr, ddy = rx * fade, ry * fade
-        local col = g.edge and pan_mag > 0.06 and shift_col or dot_col
-        r.ImGui_DrawList_AddEllipseFilled(dl, x, y, dr, ddy, col)
-        r.ImGui_DrawList_AddEllipse(dl, x, y, dr, ddy, col, 0, 0, 1.0)
-      end
-    end
+
+  -- Fill: two triangles per segment (robust for bowed/non-convex curves)
+  for i = 1, SEG do
+    local t0x, t0y = top_pts[i * 2 - 1], top_pts[i * 2]
+    local t1x, t1y = top_pts[i * 2 + 1], top_pts[i * 2 + 2]
+    local b0x, b0y = bot_pts[i * 2 - 1], bot_pts[i * 2]
+    local b1x, b1y = bot_pts[i * 2 + 1], bot_pts[i * 2 + 2]
+    r.ImGui_DrawList_AddTriangleFilled(dl, t0x, t0y, b0x, b0y, t1x, t1y, fill_col)
+    r.ImGui_DrawList_AddTriangleFilled(dl, t1x, t1y, b0x, b0y, b1x, b1y, fill_col)
   end
+
+  -- Outline: closed loop (top edge forward, bottom edge backward, back to start)
+  local outline = {}
+  for i = 1, #top_pts do outline[#outline + 1] = top_pts[i] end
+  for i = #bot_pts - 1, 1, -2 do
+    outline[#outline + 1] = bot_pts[i]
+    outline[#outline + 1] = bot_pts[i + 1]
+  end
+  outline[#outline + 1] = top_pts[1]
+  outline[#outline + 1] = top_pts[2]
+  r.ImGui_DrawList_AddPolyline(dl, r.new_array(outline), line_col, 0, 2.0)
   r.ImGui_DrawList_PopClipRect(dl)
 
   -- ── PITCH CURVE (white line, only when pitch_shift ≠ 0) ──
@@ -465,19 +456,35 @@ function draw_preview()
     r.ImGui_DrawList_AddPolyline(dl, arr_p, 0xCCFFFFFF, 0, 1.0)
   end
 
-  -- ── FILTER HORIZONTAL LINES (base = green, peak = bright green) ──
-  -- Each line hides independently when its knob is at the extreme of the
-  -- slider travel (mirrors pitch envelope behavior).
-  local function hz_to_norm(hz)
-    return math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
+  -- ── FILTER CURVE (fixed log ramp; green) ──
+  -- Bottom-left anchored. The curve always rises with the same log shape
+  -- and tops out at x = intensity * W: near the left edge at low
+  -- intensity, at the right edge at maximum, then flat along the top.
+  -- Hidden at intensity 0 (filter bypassed).
+  -- Colors 0xRRGGBBAA, shared with the right-edge knob below.
+  local filt_col  = 0x40E080FF  -- bright green (knob, opaque)
+  local filt_line = 0x40E080CC
+  local filt_glow = 0x40E08044
+  local function filt_int_to_y(i)
+    return cy + 6 + (1 - i) * (H - 12)
   end
-  local filter_base_y = cy + H - hz_to_norm(state.filter_base_freq) * (H - 8) - 4
-  local filter_peak_y = cy + H - hz_to_norm(state.filter_peak_freq) * (H - 8) - 4
-  if state.filter_peak_freq < 20000.0 then
-    r.ImGui_DrawList_AddLine(dl, cx, filter_peak_y, cx + W, filter_peak_y, 0xCC2D6D8C, 1.5)
-  end
-  if state.filter_base_freq > 20.0 then
-    r.ImGui_DrawList_AddLine(dl, cx, filter_base_y, cx + W, filter_base_y, 0x662D6D8C, 1.0)
+  if state.filter_intensity > 0.001 then
+    local KLOG = 4.0  -- fixed log curvature
+    local ek = math.exp(KLOG) - 1.0
+    local reach = math.max(0.03, state.filter_intensity)  -- top-out point (fraction of W)
+    local y_top, y_bot = filt_int_to_y(1), filt_int_to_y(0)
+    local fpts = {}
+    local FSEG = 64
+    for i = 0, FSEG do
+      local t = i / FSEG
+      local u = math.min(1.0, t / reach)
+      local v = math.log(1.0 + ek * u) / KLOG
+      fpts[#fpts + 1] = cx + t * W
+      fpts[#fpts + 1] = y_bot + v * (y_top - y_bot)
+    end
+    local farr = r.new_array(fpts)
+    r.ImGui_DrawList_AddPolyline(dl, farr, filt_glow, 0, 3.0)
+    r.ImGui_DrawList_AddPolyline(dl, farr, filt_line, 0, 1.5)
   end
 
   -- (Spill lines are drawn after the peak dot — they need its position)
@@ -697,74 +704,50 @@ function draw_preview()
     show_tooltip("Center = no pan sweep.\nLeft = L->R sweep.\nRight = R->L sweep.\nEdges = 100% strength.\nDouble-click to reset.")
   end
 
-  -- ── FILTER KNOBS (right edge of visualizer) ──
+  -- ── FILTER INTENSITY KNOB (right edge of visualizer) ──
+  -- Vertical drag sets the sweep depth; the knob rides the start-freq line.
+  -- The sweep always opens to fully-pass at the whoosh peak (bottom edge).
   local f_knob_x = cx + W - 8
   local f_inset = 6
-  local function f_hz_to_y(hz)
-    local n = math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
-    return cy + f_inset + (1 - n) * (H - 2 * f_inset)
-  end
-  local function f_y_to_hz(y)
-    local n = math.max(0.0, math.min(1.0, 1.0 - (y - cy - f_inset) / (H - 2 * f_inset)))
-    return 20.0 * (24000.0 / 20.0) ^ n
-  end
 
-  local ft_y = f_hz_to_y(state.filter_peak_freq)
-  local fb_y = f_hz_to_y(state.filter_base_freq)
+  local fi_y = filt_int_to_y(state.filter_intensity)
 
-  r.ImGui_DrawList_AddRectFilled(dl, f_knob_x - 2, ft_y, f_knob_x + 2, fb_y, 0x442D6D8C, 1)
+  -- Sweep-range bar: knob down to the bottom edge (= fully open at the peak)
+  r.ImGui_DrawList_AddRectFilled(dl, f_knob_x - 2, fi_y, f_knob_x + 2, filt_int_to_y(0), 0x40E08022, 1)
 
-  local f_dist_top = math.abs(my - ft_y)
-  local f_dist_bot = math.abs(my - fb_y)
-
-  -- Only activate on knob hit (not the fill line)
-  if mouse_clicked and not dur_dragging and not pan_dragging and not pitch_dragging and not peak_dragging and not rise_dragging and not fall_dragging then
-    if f_dist_top < f_dist_bot and f_dist_top < 8 then
-      filter_top_dragging = true
-    elseif f_dist_bot < 8 then
-      filter_bottom_dragging = true
-    end
+  local f_hit = math.abs(mx - f_knob_x) < 10 and math.abs(my - fi_y) < 8
+  if mouse_clicked and f_hit and not dur_dragging and not pan_dragging and not pitch_dragging and not peak_dragging and not rise_dragging and not fall_dragging then
+    filter_dragging = true
   end
   if not mouse_down then
-    filter_top_dragging = false
-    filter_bottom_dragging = false
+    filter_dragging = false
+  end
+  if filter_dragging then
+    state.filter_intensity = math.max(0.0, math.min(1.0, 1.0 - (my - cy - 6) / (H - 12)))
+    if state.filter_intensity < 0.02 then state.filter_intensity = 0.0 end
+    fi_y = filt_int_to_y(state.filter_intensity)
+  end
+  if f_hit and r.ImGui_IsMouseDoubleClicked(ctx, 0) then
+    state.filter_intensity = 0.0
+    fi_y = filt_int_to_y(0)
   end
 
-  local min_hz_gap = 100.0
-  local snap_top = 19900.0
-  if filter_top_dragging then
-    local new_hz = f_y_to_hz(math.max(cy + f_inset, math.min(fb_y, my)))
-    new_hz = math.max(state.filter_base_freq + min_hz_gap, math.min(20000.0, new_hz))
-    if new_hz > snap_top then new_hz = 20000.0 end
-    state.filter_peak_freq = new_hz
-  end
-  if filter_bottom_dragging then
-    local new_hz = f_y_to_hz(math.min(cy + H - f_inset, math.max(ft_y, my)))
-    new_hz = math.min(state.filter_peak_freq - min_hz_gap, math.max(20.0, new_hz))
-    if new_hz < 20.5 then new_hz = 20.0 end
-    state.filter_base_freq = new_hz
-  end
+  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, fi_y, f_inset, filt_col)
+  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, fi_y, 3, 0xFFFFFFFF)
 
-  ft_y = f_hz_to_y(state.filter_peak_freq)
-  fb_y = f_hz_to_y(state.filter_base_freq)
-
-  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, ft_y, f_inset, 0xFF2D6D8C)
-  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, ft_y, 3, 0xFF33A07C)
-  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, fb_y, f_inset, 0xFF1A5C4A)
-  r.ImGui_DrawList_AddCircleFilled(dl, f_knob_x, fb_y, 3, 0xFF22705A)
-
-  local f_hover = math.abs(mx - f_knob_x) < 10 and (f_dist_top < 8 or f_dist_bot < 8)
-  if f_hover or filter_top_dragging or filter_bottom_dragging then
-    local filter_off_now = state.filter_peak_freq >= 20000.0 and state.filter_base_freq >= state.filter_peak_freq - 100.5
-    local tip = string.format("Peak: %.0f Hz  Base: %.0f Hz", state.filter_peak_freq, state.filter_base_freq)
-    if filter_off_now then
-      tip = tip .. "\n(EQ doppler bypassed — both knobs at maximum)"
+  if f_hit or filter_dragging then
+    local tip
+    if state.filter_intensity <= 0.0 then
+      tip = "Filter intensity: 0% (high-pass bypassed)\nDrag up to add a sweep. Double-click resets."
+    else
+      tip = string.format("Filter intensity: %.0f%%\nHigh-pass starts at %.0f Hz at the edges,\nopens fully at the peak. Double-click resets.",
+        state.filter_intensity * 100, filter_edge_hz(state.filter_intensity))
     end
     show_tooltip(tip)
   end
 
   -- ── HOVER READOUT ──
-  if not peak_dragging and not rise_dragging and not fall_dragging and not pitch_dragging and not filter_top_dragging and not filter_bottom_dragging and not dur_dragging and not pan_dragging and mx >= cx and mx <= cx + W and my >= cy and my <= cy + H then
+  if not peak_dragging and not rise_dragging and not fall_dragging and not pitch_dragging and not filter_dragging and not dur_dragging and not pan_dragging and mx >= cx and mx <= cx + W and my >= cy and my <= cy + H then
     local hover_t = (mx - cx) / W
     hover_t = math.max(0, math.min(1, hover_t))
     local hover_x = cx + hover_t * W
@@ -834,7 +817,8 @@ function save_settings()
     sampling_mode = state.sampling_mode,
     grain_size = state.grain_size,
     grain_density = state.grain_density,
-    randomness = state.randomness,
+    grain_pitch_rand = state.grain_pitch_rand,
+    grain_vol_rand = state.grain_vol_rand,
     playback_mode = state.playback_mode,
     inset = state.inset,
     peak_pos = state.peak_pos,
@@ -843,10 +827,8 @@ function save_settings()
     release = state.release,
     pitch_shift = state.pitch_shift,
     pitch_mode = state.pitch_mode,
-    filter_mode = state.filter_mode,
     min_volume_db = state.min_volume_db,
-    filter_base_freq = state.filter_base_freq,
-    filter_peak_freq = state.filter_peak_freq,
+    filter_intensity = state.filter_intensity,
     pan_amount = state.pan_amount,
     pan_value = state.pan_value,
     enable_doppler = state.enable_doppler,
@@ -1036,7 +1018,8 @@ function do_generate(is_mono, apply_env)
     
     local t = win_start
     for i = 1, #order do
-      if t + item_len > win_end then break end
+      -- Every source gets its slot; the tail slice is clamped to fit below.
+      if t >= win_end then break end
       
       local track = source_tracks[order[i]]
       if not track then break end
@@ -1047,12 +1030,14 @@ function do_generate(is_mono, apply_env)
         if take then
           local source = r.GetMediaItemTake_Source(take)
           if source then
+            -- Clamp the final slice so it can't spill past the window
+            local this_len = math.min(item_len, win_end - t)
             local new_item = r.AddMediaItemToTrack(temp_track)
             r.SetMediaItemInfo_Value(new_item, 'D_POSITION', t)
-            r.SetMediaItemInfo_Value(new_item, 'D_LENGTH', item_len)
+            r.SetMediaItemInfo_Value(new_item, 'D_LENGTH', this_len)
             r.SetMediaItemInfo_Value(new_item, 'B_LOOPSRC', 0)
             
-            local max_fade = item_len * 0.49
+            local max_fade = this_len * 0.49
             r.SetMediaItemInfo_Value(new_item, 'D_FADEINLEN', math.min(crossfade_s, max_fade))
             r.SetMediaItemInfo_Value(new_item, 'D_FADEOUTLEN', math.min(crossfade_s, max_fade))
             r.SetMediaItemInfo_Value(new_item, 'D_FADEINTYPE', 1)
@@ -1095,10 +1080,20 @@ function do_generate(is_mono, apply_env)
               
               while t < win_end and #layer_items < 500 do
                 local grain_s = grain_s_base * (0.8 + math.random() * 0.4)
-                if t + grain_s > win_end then break end
+
+                -- Per-grain pitch randomization via playback rate; the item
+                -- extends/shrinks so the same source slice is preserved.
+                local rate = 1.0
+                if state.grain_pitch_rand > 0 then
+                  rate = 1.0 + (math.random() - 0.5) * 2.0 * (state.grain_pitch_rand / 100.0)
+                end
+                local item_len = grain_s / rate
+                if t + item_len > win_end then break end
                 
-                local overlap_s = grain_s * density_normalized
-                local hop_s = math.max(0.001, grain_s - overlap_s)
+                -- Density remapped to a safe overlap window: 0% → 15%, 100% → 75%.
+                -- The 15% floor guarantees a crossfade at every grain join (no clicks).
+                local overlap_s = item_len * (0.15 + density_normalized * 0.60)
+                local hop_s = math.max(0.001, item_len - overlap_s)
                 local fade_len = overlap_s * 0.5
                 
                 local max_offs = math.max(0.0, source_len - grain_s)
@@ -1109,8 +1104,10 @@ function do_generate(is_mono, apply_env)
                   if read_head > 1.0 then read_head = 1.0 end
                   base_pos = read_head * max_offs
                 elseif mode == 2 then
-                  read_head = read_head - (hop_s / win_dur)
-                  if read_head < 0.0 then read_head = 0.0 end
+                  -- Reverse: same 0→1 sweep as Forward, mapped end→start so
+                  -- grains scan the source backwards across the whoosh.
+                  read_head = read_head + (hop_s / win_dur)
+                  if read_head > 1.0 then read_head = 1.0 end
                   base_pos = (1.0 - read_head) * max_offs
                 elseif mode == 3 then
                   read_head = read_head + (hop_s / win_dur)
@@ -1124,10 +1121,10 @@ function do_generate(is_mono, apply_env)
                 
                 local ni = r.AddMediaItemToTrack(temp_track)
                 r.SetMediaItemInfo_Value(ni, 'D_POSITION', t)
-                r.SetMediaItemInfo_Value(ni, 'D_LENGTH', grain_s)
+                r.SetMediaItemInfo_Value(ni, 'D_LENGTH', item_len)
                 r.SetMediaItemInfo_Value(ni, 'B_LOOPSRC', 0)
                 
-                local mf = grain_s * 0.49
+                local mf = item_len * 0.49
                 r.SetMediaItemInfo_Value(ni, 'D_FADEINLEN', math.min(fade_len, mf))
                 r.SetMediaItemInfo_Value(ni, 'D_FADEOUTLEN', math.min(fade_len, mf))
                 r.SetMediaItemInfo_Value(ni, 'D_FADEINTYPE', 2)
@@ -1137,9 +1134,14 @@ function do_generate(is_mono, apply_env)
                 r.SetMediaItemTake_Source(nt, source)
                 r.SetMediaItemTakeInfo_Value(nt, 'D_STARTOFFS', base_pos)
                 
-                if state.randomness > 0 then
-                  local rs = (math.random() - 0.5) * 2.0 * state.randomness * 12
-                  r.SetMediaItemTakeInfo_Value(nt, 'D_PLAYRATE', 2.0 ^ (rs / 12.0))
+                if rate ~= 1.0 then
+                  r.SetMediaItemTakeInfo_Value(nt, 'D_PLAYRATE', rate)
+                end
+
+                -- Per-grain volume randomization (linear amplitude ±%)
+                if state.grain_vol_rand > 0 then
+                  local gv = 1.0 + (math.random() - 0.5) * 2.0 * (state.grain_vol_rand / 100.0)
+                  r.SetMediaItemInfo_Value(ni, 'D_VOL', math.max(0.0, gv))
                 end
                 
                 table.insert(layer_items, ni)
@@ -1463,32 +1465,42 @@ function apply_doppler_envelopes(env_start, env_end, anchor_start, anchor_end, a
   end
 
   ----------------------------------------------------------------------
-  -- Filter envelope (ReaEQ — single-band low-pass)
-  -- Disabled when both knobs are at max or both at min.
+  -- Filter envelope (ReaEQ — single high-pass band)
+  -- Intensity sets the edge cutoff (20 Hz .. 2 kHz); the band always opens
+  -- to ~20 Hz at the whoosh peak. Bypassed at intensity 0.
+  -- ReaEQ exposes no automatable "type" parameter, so the band is forced
+  -- via TrackFX_SetEQParam (bandtype 0 = high pass), which targets the
+  -- first HP band or creates one. The envelope is written to that exact
+  -- band's frequency param, located via TrackFX_GetEQParam.
   ----------------------------------------------------------------------
-  local filter_off_max =
-    state.filter_peak_freq >= 20000.0 and
-    state.filter_base_freq >= state.filter_peak_freq - 100.5
-  local filter_off_min =
-    state.filter_base_freq <= 20.5 and
-    state.filter_peak_freq <= state.filter_base_freq + 100.5
   local filter_idx = get_or_add_fx(temp_track, 'ReaEQ', 'VST: ReaEQ (Cockos)', 'VST3: ReaEQ (Cockos)')
   if filter_idx >= 0 then
-    if filter_off_max or filter_off_min then
+    if state.filter_intensity <= 0.001 then
       r.TrackFX_SetEnabled(temp_track, filter_idx, false)
     else
       r.TrackFX_SetEnabled(temp_track, filter_idx, true)
 
-      local type_param = find_fx_param(temp_track, filter_idx, {"type"})
-      if type_param >= 0 then
-        local type_val = state.filter_mode == 1 and 0.8 or 0.2
-        r.TrackFX_SetParam(temp_track, filter_idx, type_param, type_val)
+      local edge_hz = filter_edge_hz(state.filter_intensity)
+      local BT_HIPASS = 0  -- TrackFX_SetEQParam bandtype: 0=hipass, 5=lopass
+      if r.TrackFX_SetEQParam then
+        r.TrackFX_SetEQParam(temp_track, filter_idx, BT_HIPASS, 0, 0, edge_hz, false)  -- freq (Hz)
+        r.TrackFX_SetEQParam(temp_track, filter_idx, BT_HIPASS, 0, 2, 0.707, false)     -- Q
+        if r.TrackFX_SetEQBandEnabled then
+          r.TrackFX_SetEQBandEnabled(temp_track, filter_idx, BT_HIPASS, 0, true)
+        end
       end
 
-      local bw_param = find_fx_param(temp_track, filter_idx, {"bandwidth", " q", "q/"})
-      if bw_param >= 0 then r.TrackFX_SetParam(temp_track, filter_idx, bw_param, 0.7) end
-
-      local freq_param = find_fx_param(temp_track, filter_idx, {"frequency", "freq"})
+      -- Locate the HP band's frequency param for the envelope
+      local freq_param = -1
+      if r.TrackFX_GetEQParam then
+        for i = 0, r.TrackFX_GetNumParams(temp_track, filter_idx) - 1 do
+          local ok, bt, _, pt = r.TrackFX_GetEQParam(temp_track, filter_idx, i)
+          if ok and bt == BT_HIPASS and pt == 0 then freq_param = i break end
+        end
+      end
+      if freq_param < 0 then  -- fallback for old REAPER builds
+        freq_param = find_fx_param(temp_track, filter_idx, {"frequency", "freq"})
+      end
       if freq_param < 0 then freq_param = 0 end
 
       local filter_env = r.GetFXEnvelope(temp_track, filter_idx, freq_param, true)
@@ -1496,11 +1508,17 @@ function apply_doppler_envelopes(env_start, env_end, anchor_start, anchor_end, a
         local function hz_to_norm(hz)
           return math.max(0.0, math.min(1.0, math.log(hz / 20.0) / math.log(24000.0 / 20.0)))
         end
-        local norm_base = hz_to_norm(state.filter_base_freq)
-        local norm_peak = hz_to_norm(state.filter_peak_freq)
-        local f_start = anchor_start
-        local f_end = anchor_end
-        write_doppler_env(filter_env, norm_base, norm_peak, norm_base, env_start, f_start, f_end, env_end, att, rel)
+        local norm_edge = hz_to_norm(edge_hz)
+        local norm_open = hz_to_norm(20.0)  -- fully open at the peak
+        write_doppler_env(filter_env, norm_edge, norm_open, norm_edge, env_start, anchor_start, anchor_end, env_end, att, rel)
+      end
+
+      -- ReaEQ doesn't follow an API-written envelope until its state is
+      -- re-synced (opening the FX UI does this implicitly). An offline/
+      -- online cycle forces the same refresh without touching any UI.
+      if r.TrackFX_SetOffline then
+        r.TrackFX_SetOffline(temp_track, filter_idx, true)
+        r.TrackFX_SetOffline(temp_track, filter_idx, false)
       end
     end
   end
@@ -1546,8 +1564,14 @@ function apply_volume_envelope()
   local env_start, env_end, peak_start, peak_end, att, rel = calc_env_bounds(state.generated_start, state.generated_end)
   if not env_start then r.PreventUIRefresh(-1) return end
 
-  local env_min = state.min_volume_db <= -59 and r.ScaleToEnvelopeMode(1, 0.0) or r.ScaleToEnvelopeMode(0, state.min_volume_db)
-  local env_max = r.ScaleToEnvelopeMode(1, 1.0)
+  -- Envelope point values live in the envelope's own scaling domain
+  -- (REAPER defaults volume envelopes to fader scaling, where raw points
+  -- are NOT plain amplitude). Convert from amplitude via the envelope's
+  -- actual scaling mode. 0.0 = -inf in any domain.
+  local env_scaling = r.GetEnvelopeScalingMode(vol_env)
+  local env_max = r.ScaleToEnvelopeMode(env_scaling, 1.0)
+  local env_min = state.min_volume_db <= -59 and 0.0
+    or r.ScaleToEnvelopeMode(env_scaling, 10.0 ^ (state.min_volume_db / 20.0))
 
   write_doppler_env(vol_env, env_min, env_max, env_min, env_start, peak_start, peak_end, env_end, att, rel)
 
@@ -1608,7 +1632,10 @@ local function panel_identity()
   if r.ImGui_BeginTable(ctx, "StatusGrid", 2, r.ImGui_TableFlags_SizingStretchProp()) then
     r.ImGui_TableNextRow(ctx)
     r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Pitch: %+.0f st", state.pitch_shift))
-    r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Filter: %.0f–%.0f Hz", state.filter_base_freq, state.filter_peak_freq))
+    local filt_status = state.filter_intensity > 0.001
+      and string.format("Filter: %.0f%% (%.0f Hz)", state.filter_intensity * 100, filter_edge_hz(state.filter_intensity))
+      or "Filter: off"
+    r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, filt_status)
     r.ImGui_TableNextRow(ctx)
     r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Pan: %s (%d%%)", pan_dir, math.floor(math.abs(state.pan_value) * 100)))
     r.ImGui_TableNextColumn(ctx); r.ImGui_TextColored(ctx, status_col, string.format("Inset: %d%%", pct))
@@ -1840,7 +1867,12 @@ function loop()
 
   if show_options then
     push_theme()
-    local opt_vis, opt_open = r.ImGui_Begin(ctx, "GranularWhoosh Options##opts", true, r.ImGui_WindowFlags_AlwaysAutoResize())
+    -- NoDocking keeps the Options popup floating (guard for older ReaImGui builds)
+    local opt_flags = r.ImGui_WindowFlags_AlwaysAutoResize()
+    if r.ImGui_WindowFlags_NoDocking then
+      opt_flags = opt_flags | r.ImGui_WindowFlags_NoDocking()
+    end
+    local opt_vis, opt_open = r.ImGui_Begin(ctx, "GranularWhoosh Options##opts", true, opt_flags)
     if opt_vis then
       local pitch_avail = r.ImGui_GetContentRegionAvail(ctx)
       local pitch_bw = (pitch_avail - 12) * 0.25
@@ -1863,27 +1895,6 @@ function loop()
       end
 
       r.ImGui_Spacing(ctx)
-      local filter_avail = r.ImGui_GetContentRegionAvail(ctx)
-      local filter_bw = (filter_avail - 4) * 0.5
-      if filter_bw < 80 then filter_bw = 80 end
-      r.ImGui_Text(ctx, "Filter Type")
-      local filter_labels = {"Low Pass", "High Pass"}
-      for i, label in ipairs(filter_labels) do
-        if i > 1 then r.ImGui_SameLine(ctx, 0, 4) end
-        if state.filter_mode == i - 1 then
-          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x2D6D8CFF)
-          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
-          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
-        else
-          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Button(), 0x202020FF)
-          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x333333FF)
-          r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x444444FF)
-        end
-        if r.ImGui_Button(ctx, label, filter_bw, 28) then state.filter_mode = i - 1 end
-        r.ImGui_PopStyleColor(ctx, 3)
-      end
-
-      r.ImGui_Spacing(ctx)
       r.ImGui_Text(ctx, "Min Volume Floor")
       local min_db = state.min_volume_db
       local changed, new_db = r.ImGui_SliderDouble(ctx, "##minvol", min_db, -60.0, -20.0, "%.0f dB")
@@ -1896,6 +1907,12 @@ function loop()
         r.ImGui_PopTextWrapPos(ctx)
         r.ImGui_EndTooltip(ctx)
       end
+      r.ImGui_Spacing(ctx)
+      r.ImGui_Text(ctx, "Grain Randomization")
+      state.grain_pitch_rand = labeled_slider("Pitch", state.grain_pitch_rand, 0.0, 20.0, "±%.1f%%", 0.0,
+        "Random playback-rate variation per grain (Uniform mode).\nGrains extend/shrink to preserve the source slice.\n0% = off. Double-click resets.")
+      state.grain_vol_rand = labeled_slider("Volume", state.grain_vol_rand, 0.0, 15.0, "±%.1f%%", 0.0,
+        "Random volume variation per grain (Uniform mode).\n0% = off. Double-click resets.")
       r.ImGui_End(ctx)
     end
     pop_theme()

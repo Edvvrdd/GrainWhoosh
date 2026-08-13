@@ -43,9 +43,8 @@ A granular sound design tool built directly into REAPER. Unlike traditional seal
 
 - **Sampling Mode** — `Uniform` (classic granular: grains cycle through all sources with random offsets) or `Sequential` (each source gets one grain in order, auto-sized to fill the time selection)
 - **Grain Size** — duration of each slice in Uniform mode (10–500 ms); ignored in Sequential mode where grain size is auto-calculated
-- **Grain Density** — how densely grains overlap; higher values = thicker texture (shown as overlap percentage)
-- **Positional Randomness** — random offset in the source read-head per grain
-- **Pitch/Direction Randomness** — random pitch variation per grain via playback rate
+- **Grain Density** — how densely grains overlap; higher values = thicker texture (maps to 15–75% grain overlap; the 15% floor guarantees crossfades at every grain join, preventing clicks)
+- Per-grain **Pitch** (±0–20%, via playback rate — grains extend/shrink to preserve the source slice) and **Volume** (±0–15%) randomization, set in the Options popup; Uniform mode only
 - **Sampling Direction** — how sources are ordered: Forward, Reverse, Ping-Pong, or Random
 - **Inset** — shrinks the grain placement window inside the time selection, giving silent margins at each end
 
@@ -68,10 +67,7 @@ Toggles pitch, filter, and pan envelopes that simulate a moving sound source. Al
 - **Mode** — selectable in Options: **Shift Full** (±24 st range), **Shift Semitones** (±12 st), **Shift Cents** (±100 cent range for subtle shifts), **Formant Full** (formant-preserving shift at ±24 st range)
 
 **Filter**
-- **Base Freq** — filter frequency at the edges of the whoosh (20–2000 Hz)
-- **Peak Freq** — filter frequency at the peak (1000–20000 Hz)
-- **Type** — selectable in Options: **Low Pass** or **High Pass**
-- Filter is automatically bypassed when both knobs sit at their maximum or minimum positions (no audible sweep)
+- **Intensity** — depth of the high-pass sweep (0–100%), via the green knob on the right edge of the visualizer. The high-pass starts thin at the edges of the whoosh (up to 2 kHz at full intensity) and opens fully at the peak, letting the low end through as the source "arrives". 0% bypasses the filter.
 
 **Pan**
 - **Strength / Direction** — signed slider: center = no sweep, negative = L→R sweep, positive = R→L sweep. Magnitude controls offset strength
@@ -88,7 +84,7 @@ The live preview at the bottom of the window shows:
 
 - **Volume envelope** (cyan) — the bezier curve that will be written to the temp track
 - **Pitch envelope** (magenta) — ReaPitch automation curve (visible when Doppler is enabled)
-- **Filter envelope** (green) — ReaEQ lowpass automation curve (visible when Doppler is enabled)
+- **Filter envelope** (green) — ReaEQ high-pass automation line (visible when filter intensity is above 0)
 - **Grain background** — in Uniform mode, a dense texture of vertical lines; in Sequential mode, numbered blocks with neon borders showing source order
 
 ## Recursive granulation
