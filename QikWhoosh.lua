@@ -1,9 +1,9 @@
--- @description GranularWhoosh
+-- @description QikWhoosh
 -- @author Ed
 -- @version 1.0
 -- @provides [main] .
 -- @about
---   # GranularWhoosh — Granular Whoosh Generator
+--   # QikWhoosh — Granular Whoosh Generator
 --
 --   A granular sound design tool built directly into REAPER. Your
 --   session is the sample library — drop audio items onto child
@@ -15,7 +15,7 @@
 --   - ReaPitch (ships with REAPER)
 -- @changelog
 --   v1.0
---   - Major rebuild of the GranularWhoosh tool
+--   - Major rebuild of the QikWhoosh tool
 --   - Improved UI and performance
 --   - Added new features and enhancements
 --   v0.9.1
@@ -30,7 +30,7 @@ if not r.ImGui_CreateContext then
   r.ShowMessageBox("This script requires ReaImGui.", "ReaImGui not found", 0)
   return
 end
-local ctx = r.ImGui_CreateContext("GranularWhoosh")
+local ctx = r.ImGui_CreateContext("QikWhoosh")
 
 -- ── Theme (mutable, RGBA format: 0xRRGGBBAA) ──
 local theme = {
@@ -810,7 +810,7 @@ end
 ---------------------------------------------------------------------
 -- Settings Persistence
 ---------------------------------------------------------------------
-local SETTINGS_SECTION = "GranularWhoosh"
+local SETTINGS_SECTION = "QikWhoosh"
 
 function save_settings()
   local data = {
@@ -1181,7 +1181,7 @@ function do_generate(is_mono, apply_env)
   if not xfade_was_on then r.Main_OnCommand(40041, 0) end
   
   r.PreventUIRefresh(-1)
-  r.Undo_EndBlock("GranularWhoosh: Generate " .. unique_name, -1)
+  r.Undo_EndBlock("QikWhoosh: Generate " .. unique_name, -1)
   
   state.has_generated_item = true
   state.is_generating = false
@@ -1235,7 +1235,7 @@ function do_resample()
   state.has_generated_item = false
   
   r.PreventUIRefresh(-1)
-  r.Undo_EndBlock("GranularWhoosh: Resample to folder", -1)
+  r.Undo_EndBlock("QikWhoosh: Resample to folder", -1)
   
   r.UpdateArrange()
   state.status_msg = "Resampled to 'Resample_" .. resample_num .. "'"
@@ -1287,7 +1287,7 @@ function do_render(is_mono)
 
   r.PreventUIRefresh(-1)
   r.UpdateArrange()
-  r.Undo_EndBlock("GranularWhoosh: Render " .. state.temp_track_name, -1)
+  r.Undo_EndBlock("QikWhoosh: Render " .. state.temp_track_name, -1)
 end
 
 function do_envelope_only()
@@ -1320,7 +1320,7 @@ function do_envelope_only()
   r.TrackList_AdjustWindows(false)
   r.UpdateArrange()
   r.PreventUIRefresh(-1)
-  r.Undo_EndBlock("GranularWhoosh: Envelope Only", -1)
+  r.Undo_EndBlock("QikWhoosh: Envelope Only", -1)
 
   state.status_msg = string.format("Envelopes written on '%s' (no items)", state.temp_track_name)
 end
@@ -1611,8 +1611,8 @@ local function panel_identity()
     x = x + sz + gap
   end
   local tx = x + 4
-  local text_w, text_h = r.ImGui_CalcTextSize(ctx, "GranularWhoosh")
-  r.ImGui_DrawList_AddText(tdl, tx, tminy + 8, theme.Text, "GranularWhoosh")
+  local text_w, text_h = r.ImGui_CalcTextSize(ctx, "QikWhoosh")
+  r.ImGui_DrawList_AddText(tdl, tx, tminy + 8, theme.Text, "QikWhoosh")
   local bp = 4
   r.ImGui_DrawList_AddRect(tdl, tx - bp, tminy + 4, tx + text_w + bp, tminy + tb_h - 4, theme.SliderGrab, 4)
   x = tx + text_w + 8
@@ -1784,7 +1784,7 @@ function loop()
   -- mode the fixed-width panel row exceeds the docker width and the user
   -- scrolls horizontally to reveal each section.
   local win_flags = r.ImGui_WindowFlags_NoCollapse() | r.ImGui_WindowFlags_HorizontalScrollbar()
-  local vis, open = r.ImGui_Begin(ctx, 'GranularWhoosh v1.0.0', true, win_flags)
+  local vis, open = r.ImGui_Begin(ctx, 'QikWhoosh v1.0.0', true, win_flags)
 
   if vis then
     -- Detect docked state (ReaImGui exposes IsWindowDocked). Falls back to
@@ -1872,7 +1872,7 @@ function loop()
     if r.ImGui_WindowFlags_NoDocking then
       opt_flags = opt_flags | r.ImGui_WindowFlags_NoDocking()
     end
-    local opt_vis, opt_open = r.ImGui_Begin(ctx, "GranularWhoosh Options##opts", true, opt_flags)
+    local opt_vis, opt_open = r.ImGui_Begin(ctx, "QikWhoosh Options##opts", true, opt_flags)
     if opt_vis then
       local pitch_avail = r.ImGui_GetContentRegionAvail(ctx)
       local pitch_bw = (pitch_avail - 12) * 0.25

@@ -1,6 +1,6 @@
-# GranularWhoosh
+# QikWhoosh
 
-A granular sound design tool built directly into REAPER. Unlike traditional sealed instruments or rigid sample libraries, GranularWhoosh turns your entire session into the granular engine. It features a uniquely flexible workflow where every processing stage is fully editable on the timeline — you can tweak volume, pan, pitch, and filter envelopes post-generation, and even recursively re-granulate your output with a single click.
+A granular sound design tool built directly into REAPER. Unlike traditional sealed instruments or rigid sample libraries, QikWhoosh turns your entire session into the granular engine. It features a uniquely flexible workflow where every processing stage is fully editable on the timeline — you can tweak volume, pan, pitch, and filter envelopes post-generation, and even recursively re-granulate your output with a single click.
 
 
 ## Requirements
@@ -16,7 +16,7 @@ A granular sound design tool built directly into REAPER. Unlike traditional seal
 3. Click **Import/export → Import repositories**
 4. Paste this URL: [https://raw.githubusercontent.com/Edvvrdd/GrainWhoosh/main/index.xml](https://raw.githubusercontent.com/Edvvrdd/GrainWhoosh/main/index.xml)
 5. **Extensions → ReaPack → Synchronize packages**
-6. Run `Script: GranularWhoosh.lua` from the Actions list
+6. Run `Script: QikWhoosh.lua` from the Actions list
 
 ## Workflow
 
@@ -99,7 +99,7 @@ The output of one whoosh can become the source for the next. Use **Resample to F
 
 ## Credits
 
-Heavily inspired by [ReaWhoosh](https://reaper.blog/2026/02/reawhoosh-generator-reaper-script/) by SBP — studying that script's envelope-handling patterns was essential to getting GranularWhoosh's timeline integration working reliably.
+Heavily inspired by [ReaWhoosh](https://reaper.blog/2026/02/reawhoosh-generator-reaper-script/) by SBP — studying that script's envelope-handling patterns was essential to getting QikWhoosh's timeline integration working reliably.
 
 Design sensibility informed by [Tonsturm Whoosh](https://tonsturm.com/product/whoosh).
 
