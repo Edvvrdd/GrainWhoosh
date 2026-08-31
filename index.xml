@@ -7,7 +7,7 @@
         <link rel="website">https://github.com/Edvvrdd/GrainWhoosh</link>
       </metadata>
       <version name="1.0" author="Ed" time="2026-04-30T00:00:00Z">
-        <changelog><![CDATA[Major rebuild: new Sequential sampling mode, Doppler envelope section, Resample to folder, compression, and UI enhancements]]></changelog>
+        <changelog><![CDATA[Major rebuild: new Sequential sampling mode, Doppler envelope section, Resample to folder, and UI enhancements]]></changelog>
         <source main="main">https://raw.githubusercontent.com/Edvvrdd/GrainWhoosh/main/QikWhoosh.lua</source>
       </version>
       <version name="0.9.1" author="Ed" time="2026-04-29T00:00:00Z">

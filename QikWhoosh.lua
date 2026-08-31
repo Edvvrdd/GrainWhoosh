@@ -154,7 +154,6 @@ local state = {
   pitch_mode = 2,   -- 0=Full Range, 1=Semitones, 2=Cents, 3=Formant
   min_volume_db = -30.0,  -- -60..-20, floor for volume envelope
   filter_intensity = 0.5, -- 0..1 high-pass sweep depth (0 = bypassed)
-  pan_amount = 1.0,
   pan_value = 0.0,  -- -1 (L→R) .. 0 (off) .. +1 (R→L)
   enable_doppler = true,
   
@@ -270,15 +269,6 @@ function labeled_slider(label, value, min, max, format, default_val, tooltip)
   show_tooltip(tooltip)
   if changed then return new_value end
   return value
-end
-
-function labeled_combo(label, idx, items, tooltip)
-  r.ImGui_Text(ctx, label)
-  r.ImGui_SetNextItemWidth(ctx, -1)
-  local changed, new_idx = r.ImGui_Combo(ctx, '##'..label, idx, table.concat(items, '\0')..'\0')
-  show_tooltip(tooltip)
-  if changed then return new_idx end
-  return idx
 end
 
 local peak_dragging = false  -- tracks whether the peak position dot is being dragged
@@ -829,7 +819,6 @@ function save_settings()
     pitch_mode = state.pitch_mode,
     min_volume_db = state.min_volume_db,
     filter_intensity = state.filter_intensity,
-    pan_amount = state.pan_amount,
     pan_value = state.pan_value,
     enable_doppler = state.enable_doppler,
     temp_track_name = state.temp_track_name,
@@ -1734,7 +1723,7 @@ local function panel_output()
   r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonHovered(), 0x33A07CFF)
   r.ImGui_PushStyleColor(ctx, r.ImGui_Col_ButtonActive(), 0x287A5EFF)
   if r.ImGui_Button(ctx, "Generate Stereo", half_w, 28) then do_render(false) end
-  show_tooltip("Bounce the temp track through FX (ReaPitch, ReaEQ, ReaComp)\nto a new stem track. Stereo output.")
+  show_tooltip("Bounce the temp track through FX (ReaPitch, ReaEQ)\nto a new stem track. Stereo output.")
   r.ImGui_SameLine(ctx, 0, 4)
   if r.ImGui_Button(ctx, "Generate Mono", half_w, 28) then do_render(true) end
   show_tooltip("Same as Generate Stereo but summed to mono.")

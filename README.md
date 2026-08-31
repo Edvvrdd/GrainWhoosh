@@ -34,7 +34,7 @@ A granular sound design tool built directly into REAPER. Unlike traditional seal
 |---|---|
 | **Generate Stereo** | Fresh whoosh with a new random seed, stereo output |
 | **Generate Mono** | Same but mono; pan envelope is written flat |
-| **Render** | Bounce the temp track through its full signal chain (including ReaPitch, ReaEQ, ReaComp) to a new track below it |
+| **Render** | Bounce the temp track through its full signal chain (including ReaPitch, ReaEQ) to a new track below it |
 | **Resample to Folder** | Move the glued item from the temp track into the source folder as a new child track — enables recursive granulation without leaving the folder ecosystem |
 
 ## Controls
@@ -54,8 +54,6 @@ A live preview shows the exact bezier curve that will be written to the temp tra
 - **Hold Time** — fraction of the duration the peak is sustained (0–0.5); creates a flat plateau at maximum
 - **Rise Tension** — curvature of the attack; positive bows upward (fast rush-in), negative concaves (slow building tension)
 - **Fall Tension** — same for the release side
-- **Front Spill** — extends the envelope start before the time selection (seconds)
-- **Back Spill** — extends the envelope end after the time selection (seconds)
 - **Min Volume Floor** — set in Options (−60 dB to −20 dB). Controls the volume floor at envelope edges. −60 ≈ total silence, −20 dB leaves audible texture. Default: −30 dB.
 
 ### Doppler section
